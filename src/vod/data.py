@@ -17,7 +17,11 @@ def find_data_root(hint=None):
     for root in candidates:
         if (root / "test_images.csv").exists():
             return root.resolve()
-    raise FileNotFoundError("Competition data not found; pass the data root explicitly.")
+    attached = sorted(str(p) for p in KAGGLE_INPUT.glob("*/*")) if KAGGLE_INPUT.exists() else []
+    raise FileNotFoundError(
+        "Competition data not found. On Kaggle: Add Input -> Competitions -> add the competition. "
+        f"Contents of /kaggle/input: {attached or 'empty'}"
+    )
 
 
 def load_coco(split_dir):

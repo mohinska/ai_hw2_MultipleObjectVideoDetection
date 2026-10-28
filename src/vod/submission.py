@@ -6,9 +6,9 @@ from .evaluate import MAX_DETS
 
 
 def write_submission(detections, test_csv, out_path):
-    """detections: dicts with image_id, cls, score, x, y, w, h. Every test image gets a row."""
+    """detections: DataFrame (or list of dicts) with image_id, cls, score, x, y, w, h. Every test image gets a row."""
     test = pd.read_csv(test_csv)
-    det = pd.DataFrame(list(detections), columns=["image_id", "cls", "score", "x", "y", "w", "h"])
+    det = pd.DataFrame(detections, columns=["image_id", "cls", "score", "x", "y", "w", "h"])
     det = det.sort_values("score", ascending=False).groupby("image_id").head(MAX_DETS)
 
     def fmt(group):

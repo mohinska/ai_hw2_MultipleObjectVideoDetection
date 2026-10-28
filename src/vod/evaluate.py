@@ -10,6 +10,14 @@ import io
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+
+try:
+    # C++ drop-in for pycocotools; the pure-Python one runs out of RAM on ~1M detections
+    import faster_coco_eval
+    faster_coco_eval.init_as_pycocotools()
+except ImportError:
+    pass
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -27,22 +35,22 @@ def image_key(file_name):
 def coco_evaluate(gt_json, detections, file_names=None, per_class=False):
     """Evaluate detections against a split's annotations_coco.json.
 
-    detections: list of dicts with keys file_name, cls (0-based), score, x, y, w, h (pixels).
+    detections: DataFrame (or list of dicts) with file_name, cls (0-based), score, x, y, w, h (pixels).
     file_names: the frames the model was run on, so frames without detections still count
     as misses; defaults to every frame of the clips that appear in `detections`.
     Returns a dict of the 12 standard COCO stats (and per-class AP if requested).
     """
+    det = pd.DataFrame(detections)
+    if det.empty:
+        return {name: 0.0 for name in STAT_NAMES}
     with contextlib.redirect_stdout(io.StringIO()):
         gt = COCO(str(gt_json))
     key_to_id = {image_key(img["file_name"]): img["id"] for img in gt.dataset["images"]}
 
-    results = [
-        {"image_id": key_to_id[image_key(d["file_name"])], "category_id": int(d["cls"]) + 1,
-         "bbox": [float(d["x"]), float(d["y"]), float(d["w"]), float(d["h"])], "score": float(d["score"])}
-        for d in detections
-    ]
-    if not results:
-        return {name: 0.0 for name in STAT_NAMES}
+    file_to_id = {f: key_to_id[image_key(f)] for f in det["file_name"].unique()}
+    # loadRes accepts an N x 7 array [image_id, x, y, w, h, score, category_id]
+    results = np.column_stack([det["file_name"].map(file_to_id), det[["x", "y", "w", "h", "score"]],
+                               det["cls"] + 1]).astype(np.float64)
 
     with contextlib.redirect_stdout(io.StringIO()):
         dt = gt.loadRes(results)
@@ -50,7 +58,7 @@ def coco_evaluate(gt_json, detections, file_names=None, per_class=False):
         if file_names is not None:
             ev.params.imgIds = sorted(key_to_id[image_key(f)] for f in file_names)
         else:
-            clips = {image_key(d["file_name"]).split("/")[0] for d in detections}
+            clips = {k.split("/")[0] for k in map(image_key, file_to_id)}
             ev.params.imgIds = sorted(i for k, i in key_to_id.items() if k.split("/")[0] in clips)
         ev.params.maxDets = [1, 10, MAX_DETS]
         ev.evaluate()
