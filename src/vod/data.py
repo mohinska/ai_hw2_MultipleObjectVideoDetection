@@ -24,6 +24,20 @@ def find_data_root(hint=None):
     )
 
 
+def find_input_file(name):
+    """Resolve a file attached as Kaggle input by its name, wherever Kaggle mounted it."""
+    path = Path(name)
+    if path.exists():
+        return path
+    hits = sorted(KAGGLE_INPUT.rglob(path.name)) if KAGGLE_INPUT.exists() else []
+    hits = [h for h in hits if "competitions" not in h.parts]
+    if not hits:
+        raise FileNotFoundError(f"{path.name} not found under {KAGGLE_INPUT}")
+    if len(hits) > 1:
+        print("several matches, using the first:", *hits, sep="\n  ")
+    return hits[0]
+
+
 def load_coco(split_dir):
     """Load annotations_coco.json of a split into (images_df, annotations_df).
 
