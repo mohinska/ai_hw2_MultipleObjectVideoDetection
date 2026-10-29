@@ -7,34 +7,70 @@ date: 2026-11-10
 
 ## Introduction
 
-Write your report here using regular **Markdown**. This text is an example — replace it.
+_TODO_
 
-## Method
+## Data
 
-Inline math works with single dollars: $f(x) = \sigma(Wx + b)$. Display math uses double dollars:
+| | train | val | test |
+|---|---|---|---|
+| clips / frames | 56 / 24,201 | 7 / 2,846 | 48 / 3,811 |
+| objects (per frame) | 1,105,516 (45.7) | 114,132 (40.1) | — |
+| ignored annotations | 510,744 | 31,960 | — |
+| frame widths, px | 1344–2720 | 1344–3840 | 680–1920 |
+| mean brightness (0–255) | 116 | 108 | 100 |
 
-$$
-\mathcal{L}(\theta) = -\frac{1}{N}\sum_{i=1}^{N} y_i \log \hat{y}_i
-$$
+| imgsz | 640 | 1024 | 1280 | 1536 |
+|---|---|---|---|---|
+| objects below 8 px at network input | 9.7% | 1.4% | 0.6% | 0.2% |
 
-Code blocks are highlighted:
+_TODO: findings and the decisions they lead to._
 
-```python
-def accuracy(y_true, y_pred):
-    return (y_true == y_pred).mean()
-```
+![Class distribution](images/eda_classes.png)
+
+![Objects per clip for each class](images/eda_class_per_clip.png)
+
+![Object sizes](images/eda_object_sizes.png)
+
+![Ground truth with ignored regions](images/eda_gt_samples.jpg)
+
+![Ignored regions and "others"](images/eda_ignore_crops.jpg)
+
+![Clip brightness](images/eda_brightness_per_clip.png)
+
+![Low-resolution test clips vs train at network input](images/eda_lowres_test.jpg)
+
+![Same-track IoU vs frame step](images/eda_track_iou.png)
+
+## Preprocessing and validation
+
+_TODO_
+
+## Two-stage anchor-based
+
+_TODO_
+
+## One-stage anchor-based
+
+_TODO_
+
+## One-stage anchor-free
+
+_TODO_
+
+## Query-based
+
+_TODO_
+
+## Final pipeline
+
+_TODO_
 
 ## Results
 
-| Model    | Accuracy | F1   |
-|----------|----------|------|
-| Baseline | 0.71     | 0.68 |
-| Ours     | 0.84     | 0.82 |
+| Model | mAP | AP50 | AP_small | ms / image | Public LB |
+|---|---|---|---|---|---|
+| YOLO11s baseline | | | | | |
 
-Images go into the `images/` folder:
+## How to run
 
-<!-- ![Training loss](images/loss.png) -->
-
-## Conclusion
-
-> Summarize your findings here.
+_TODO_

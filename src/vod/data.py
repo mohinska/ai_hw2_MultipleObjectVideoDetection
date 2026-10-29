@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 KAGGLE_INPUT = Path("/kaggle/input")
@@ -63,3 +64,62 @@ def subsample_frames(images, step):
     images = images.sort_values(["video", "frame_id"])
     rank = images.groupby("video").cumcount()
     return images[rank % step == 0]
+
+
+def load_split(split_dir, step=1):
+    """Frames of a labelled split with their image paths, target boxes and ignored regions.
+
+    Returns (frames_df, targets) where targets[image_id] = (boxes_xyxy, cls, ignore_xyxy),
+    all in original pixels; cls is 0-based.
+    """
+    split_dir = Path(split_dir)
+    images, anns = load_coco(split_dir)
+    images = subsample_frames(images, step).reset_index(drop=True)
+    base = _image_base(split_dir, images["file_name"].iloc[0])
+    images["path"] = [str(base / f) for f in images["file_name"]]
+
+    anns = anns[anns["image_id"].isin(images["id"])]
+    xyxy = anns[["x", "y", "w", "h"]].to_numpy("float32")
+    xyxy[:, 2:] += xyxy[:, :2]
+    anns = anns.assign(x1=xyxy[:, 0], y1=xyxy[:, 1], x2=xyxy[:, 2], y2=xyxy[:, 3])
+    empty = np.zeros((0, 4), "float32")
+    targets = {i: (empty, np.zeros(0, "int64"), empty) for i in images["id"]}
+    for image_id, g in anns.groupby("image_id"):
+        obj, ign = g[g["iscrowd"] == 0], g[g["iscrowd"] == 1]
+        targets[image_id] = (obj[["x1", "y1", "x2", "y2"]].to_numpy("float32"),
+                             obj["cls"].to_numpy("int64"),
+                             ign[["x1", "y1", "x2", "y2"]].to_numpy("float32"))
+    return images, targets
+
+
+def _image_base(split_dir, file_name):
+    """COCO file_name may be relative to the split folder or to the data root."""
+    return next(b for b in [split_dir, split_dir.parent, split_dir / "images"] if (b / file_name).exists())
+
+
+def object_bank(split_dir, classes, min_side=12, step=1):
+    """Clean (not occluded, not truncated) objects of `classes` for copy-paste, with their source frame.
+
+    Build it from the training split only, so no validation object is ever pasted into training.
+    """
+    split_dir = Path(split_dir)
+    images, anns = load_coco(split_dir)
+    images = subsample_frames(images, step)
+    base = _image_base(split_dir, images["file_name"].iloc[0])
+    anns = anns[(anns["iscrowd"] == 0) & anns["cls"].isin(classes) & anns["image_id"].isin(images["id"])
+                & (anns.get("occlusion", 0) == 0) & (anns.get("truncation", 0) == 0)
+                & (np.minimum(anns["w"], anns["h"]) >= min_side)]
+    paths = images.set_index("id")["file_name"].map(lambda f: str(base / f))
+    return pd.DataFrame({"path": anns["image_id"].map(paths).to_numpy(), "cls": anns["cls"].to_numpy(),
+                         "x1": anns["x"].to_numpy(), "y1": anns["y"].to_numpy(),
+                         "x2": (anns["x"] + anns["w"]).to_numpy(), "y2": (anns["y"] + anns["h"]).to_numpy(),
+                         "long_side": np.maximum(anns["width"], anns["height"]).to_numpy()})
+
+
+def repeat_factors(frames, targets, threshold):
+    """LVIS repeat-factor sampling: r_c = max(1, sqrt(t / f_c)), f_c = share of frames containing class c;
+    a frame gets the max r_c of the classes it contains."""
+    present = [set(targets[i][1].tolist()) for i in frames["id"]]
+    freq = pd.Series([c for s in present for c in s]).value_counts() / len(frames)
+    r_cls = np.maximum(1.0, np.sqrt(threshold / freq))
+    return np.array([max((r_cls[c] for c in s), default=1.0) for s in present]), r_cls.sort_index()
