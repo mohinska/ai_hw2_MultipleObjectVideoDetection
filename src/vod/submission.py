@@ -15,7 +15,8 @@ def write_submission(detections, test_csv, out_path):
         return " ".join(f"{int(r.cls)} {r.score:.4f} {r.x:.1f} {r.y:.1f} {r.w:.1f} {r.h:.1f}"
                         for r in group.itertuples())
 
-    strings = det.groupby("image_id").apply(fmt) if len(det) else pd.Series(dtype=str)
+    cols = ["cls", "score", "x", "y", "w", "h"]
+    strings = det.groupby("image_id")[cols].apply(fmt) if len(det) else pd.Series(dtype=str)
     sub = pd.DataFrame({"image_id": test["image_id"]})
     sub["PredictionString"] = sub["image_id"].map(strings).fillna("")
     sub.to_csv(out_path, index=False)

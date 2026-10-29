@@ -102,7 +102,8 @@ _TODO_
 
 | Model | mAP | AP50 | AP_small | ms / image | Public LB |
 |---|---|---|---|---|---|
-| YOLO11s baseline | | | | | |
+| YOLO11s baseline (Ultralytics defaults, 20 epochs, no ignore masking) | 0.204 | 0.397 | 0.101 | 26.8 | 0.233 |
+| RetinaNet, default anchors (protocol) | 0.180 | 0.346 | 0.063 | 52.5 | — |
 
 ## How to run
 
