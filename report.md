@@ -9,7 +9,9 @@ date: 2026-11-10
 
 _TODO_
 
-## Data
+## Method
+
+### Data
 
 Code: `notebooks/01_eda.ipynb`.
 
@@ -57,7 +59,7 @@ We train at 1280: 640 loses about a tenth of the objects, and 1536 gains little 
 
 ![Same-track IoU vs frame step](images/eda_track_iou.png)
 
-## Preprocessing and validation
+### Preprocessing and validation
 
 Ultralytics models read the provided YOLO labels. For torchvision, `vod.data.load_split` converts the COCO json to pixel `xyxy` boxes with labels 1–8 (0 is background) and keeps the ignored regions separately. On 60 val frames, the YOLO and COCO labels agree exactly: same box counts, no class mismatches, 0 px difference. The figures above and below confirm the boxes visually.
 
@@ -78,23 +80,27 @@ Frames are resized so that the long side is 1280, and boxes are scaled with them
 
 Evaluation COCO mAP, AP50 and AP_small (faster-coco-eval) on every val frame, with up to 500 detections per image and ignored regions skipped.
 
-## Two-stage anchor-based
+### Two-stage anchor-based
 
 _TODO_
 
-## One-stage anchor-based
+### One-stage anchor-based
 
 _TODO_
 
-## One-stage anchor-free
+### One-stage anchor-free
 
 _TODO_
 
-## Query-based
+### Query-based
 
 _TODO_
 
-## Final pipeline
+### Final pipeline
+
+_TODO_
+
+### How to run
 
 _TODO_
 
@@ -105,6 +111,7 @@ _TODO_
 | YOLO11s baseline (Ultralytics defaults, 20 epochs, no ignore masking) | 0.204 | 0.397 | 0.101 | 26.8 | 0.233 |
 | RetinaNet, default anchors (protocol) | 0.180 | 0.346 | 0.063 | 52.5 | — |
 
-## How to run
+## Conclusion
 
 _TODO_
+
