@@ -80,7 +80,9 @@ class FrameDataset(Dataset):
             boxes, cls = boxes[visible >= 0.5], cls[visible >= 0.5]
 
         scale = self.cfg["imgsz"] / max(img.shape[:2])
-        img = cv2.resize(img, (round(img.shape[1] * scale), round(img.shape[0] * scale)), interpolation=cv2.INTER_AREA)
+        # INTER_AREA is best for shrinking but acts like nearest-neighbour when enlarging (low-res test clips)
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+        img = cv2.resize(img, (round(img.shape[1] * scale), round(img.shape[0] * scale)), interpolation=interp)
         boxes *= scale
 
         if self.train and self.bank is not None and random.random() < self.cfg.get("paste_p", 0.0):
