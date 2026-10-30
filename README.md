@@ -1,41 +1,55 @@
-# UCU AI Homework Report Template
+# Multiple Object Video Detection
 
-Your report is published as a website in UCU colors. The page is generated from `report.md`, and it shows the date of your repository's last push.
+Our solution to Homework 2 of the "Artificial Intelligence" course at UCU: detect objects in drone video frames from [VisDrone2019-VID](https://arxiv.org/abs/2001.06303).
 
-## How to fill
+## Task
 
-1. Click **Use this template** to create your own **public** repository. If you fork instead, also open the **Actions** tab and enable workflows.
-2. Enable GitHub Pages (see [below](#enabling-github-pages)).
-3. Edit **`report.md`**:
-   - Fill in the header block at the top (`title`, `author`, `course`, `date`).
-   - Write the report in Markdown. You can use tables, code blocks, and LaTeX math (`$...$` inline, `$$...$$` for display).
-   - Put images in `images/` and reference them as `![caption](images/plot.png)`.
-4. Commit and push to `main`. GitHub Actions deploys the site automatically within about a minute, at `https://<username>.github.io/<repo>/`.
-5. Submit that link.
+For every frame of 48 unlabelled test clips, predict boxes, classes and scores. Boxes are in original-image pixels, at most 500 per image.
 
-## Enabling GitHub Pages
+- **Classes:** person, bicycle, car, van, truck, tricycle, bus, motor.
+- **Metrics:** COCO mAP, AP50, AP_small and inference speed on val.
+- **Ignored regions:** crowds and "others" are not penalised. They are masked in training and marked `iscrowd=1` in evaluation.
 
-This is a one-time step. GitHub does not copy it to your repository.
+## Team
 
-1. In your repository, open **Settings → Pages**.
-2. Under **Build and deployment → Source**, choose **GitHub Actions**. It saves as soon as you choose it.
-3. Open the **Actions** tab, select the failed **Deploy report** run, and click **Re-run jobs**.
+| | Name | GitHub |
+|:-:|---|---|
+| <img src="https://github.com/mohinska.png?size=80" width="48" alt="mohinska"/> | Maryna Ohinska | [@mohinska](https://github.com/mohinska) |
+| <img src="https://github.com/MariiaHamanuk.png?size=80" width="48" alt="MariiaHamanuk"/> | Mariia Hamaniuk | [@MariiaHamanuk](https://github.com/MariiaHamanuk) |
 
-Until you do this, every deploy fails with the error "GitHub Pages is not set up".
+## Data
 
-## Local preview
+| Split | Clips | Frames | Labels |
+|---|---:|---:|---|
+| train | 56 | 24,201 | yes |
+| val | 7 | 2,846 | yes |
+| test | 48 | 3,811 | no |
 
-```bash
-python -m http.server 8000
-# open http://localhost:8000
+Train and val are split by clip, never by frame. Details: `notebooks/01_eda_preprocessing.ipynb`.
+
+## Plan
+
+Every detector is trained under one fixed protocol (`src/vod/protocol.py`): same data, resolution, epochs and evaluation.
+
+| Step | Model | Notebook |
+|---|---|---|
+| 1. Data understanding | class balance, object sizes, density, ignored regions | `01_eda_preprocessing` |
+| 2. Baseline | YOLO11s, Ultralytics defaults | `02_baseline_yolo` |
+| 3. Two-stage anchor-based | Faster R-CNN: RPN proposals, RoI sampling, box loss, failure cases | `03_faster_rcnn` |
+| 4. One-stage anchor-based | RetinaNet: anchors from data, IoU thresholds, focal loss | `04_retinanet` |
+| 5. One-stage anchor-free | FCOS: tuning, breakdown by object size | — |
+| 6. Query-based | RT-DETR: queries, losses, same compute budget | — |
+| 7. Final pipeline | best model plus data and inference strategies, submission | — |
+
+## Repository
+
+```
+notebooks/    one notebook per step above
+src/vod/      data loading, models and training, COCO evaluation, error analysis, submission
+report.md
+images/
 ```
 
-Opening `index.html` directly from disk will not work.
+`index.html`, `assets/` and `.github/` belong to the report template and are not changed.
 
-## ⚠️ Rules
-
-You may change **only** `report.md` and the `images/` folder.
-
-**Any change to the core website (`index.html`, `assets/`, `.github/`) will annul the grade for the homework.** This includes edits that change how the last-push date is shown.
-
-The last-push date is read from GitHub and is used to check deadlines.
+##

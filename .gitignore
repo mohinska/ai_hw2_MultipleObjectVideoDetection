@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Run outputs (notebooks write here when not on Kaggle)
+outputs/
+runs/
+
+# Model weights and data
+*.pt
+*.pth
+*.onnx
+*.parquet
+data/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+tasks/
