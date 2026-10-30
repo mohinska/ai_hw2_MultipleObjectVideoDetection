@@ -362,6 +362,9 @@ def predict(model, ds, cfg):
         seconds += time.perf_counter() - t0
         n += len(imgs)
         for out, meta in zip(outs, metas):
+            # sigmoid heads (RetinaNet, FCOS) also score label 0, which is background and never a target
+            keep = out["labels"] > 0
+            out = {k: v[keep] for k, v in out.items()}
             b = out["boxes"].float().cpu().numpy() / meta["scale"]
             part = pd.DataFrame({"x": b[:, 0], "y": b[:, 1], "w": b[:, 2] - b[:, 0], "h": b[:, 3] - b[:, 1]},
                                 dtype="float32")
