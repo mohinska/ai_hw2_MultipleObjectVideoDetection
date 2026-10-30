@@ -3,6 +3,7 @@
 import json
 import math
 import random
+import shutil
 import time
 from functools import partial
 from pathlib import Path
@@ -22,7 +23,7 @@ from torchvision.models.detection.image_list import ImageList
 from torchvision.ops import box_iou, sigmoid_focal_loss
 
 from . import NUM_CLASSES
-from .evaluate import coco_evaluate
+from .evaluate import coco_evaluate, per_clip_map
 
 
 def _device():
@@ -272,7 +273,9 @@ def train(model, train_ds, val_ds, val_gt, cfg, out_dir):
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
             with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
                 losses = model(imgs, targets)
-            loss = sum(losses.values())
+            # optional loss re-weighting, e.g. {"loss_box_reg": 2.0} for the Faster R-CNN box loss
+            weights = cfg.get("loss_weights", {})
+            loss = sum(v * weights.get(k, 1.0) for k, v in losses.items())
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
@@ -298,15 +301,191 @@ def train(model, train_ds, val_ds, val_gt, cfg, out_dir):
     return pd.DataFrame(history)
 
 
-def evaluate_run(model, ds, gt_json, cfg, out_dir, name):
-    """Final evaluation on `ds`: COCO metrics (+ per class), speed; saved as metrics.json and val_dets.parquet."""
+def evaluate_run(model, ds, gt_json, cfg, out_dir, name, weights="last.pt"):
+    """Final evaluation on `ds`: COCO metrics (+ per class, per clip) and batch-1 speed;
+    saved as metrics.json and val_dets.parquet."""
     out_dir = Path(out_dir)
-    dets, ms = predict(model, ds, cfg)
+    dets, _ = predict(model, ds, cfg)
     metrics = coco_evaluate(gt_json, dets, file_names=ds.frames["path"], per_class=True)
-    metrics.update(name=name, ms_per_image=round(ms, 1), config={k: v for k, v in cfg.items() if k != "seed"})
+    metrics.update(name=name, weights=weights, ms_per_image=round(measure_speed(model, ds), 1),
+                   per_clip_mAP=per_clip_map(gt_json, dets, ds.frames["path"]),
+                   config={k: v for k, v in cfg.items() if k != "seed"})
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=1, default=str))
     dets.to_parquet(out_dir / "val_dets.parquet")
     return metrics, dets
+
+
+@torch.no_grad()
+def measure_speed(model, ds, n=100, warmup=10):
+    """Median forward time per image at batch 1 (image loading excluded), the same way for every model."""
+    device = _device()
+    model.to(device).eval()
+    times = []
+    for i in range(min(n + warmup, len(ds))):
+        img = ds[i][0].to(device)
+        _sync(device)
+        t0 = time.perf_counter()
+        with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
+            model([img])
+        _sync(device)
+        if i >= warmup:
+            times.append(time.perf_counter() - t0)
+    return 1000 * float(np.median(times))
+
+
+def evaluate_checkpoint(name, cfg, ckpt, val_frames, val_targets, val_gt, out_dir, history=None):
+    """Evaluate a saved checkpoint on every val frame; `history` (a history.csv) is copied next to it."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if history is not None and Path(history).resolve() != (out_dir / "history.csv").resolve():
+        shutil.copy(history, out_dir / "history.csv")
+    model = build_model({**cfg, "pretrained": False})
+    model.load_state_dict(torch.load(ckpt, map_location="cpu"))
+    metrics, _ = evaluate_run(model, FrameDataset(val_frames, val_targets, cfg), val_gt, cfg, out_dir, name,
+                              weights=Path(ckpt).name)
+    del model
+    torch.cuda.empty_cache()
+    return metrics
+
+
+def run_experiment(name, cfg, train_frames, train_targets, val_frames, val_targets, val_gt, out_dir):
+    """Train under `cfg`, then evaluate the last epoch on every val frame. The best epoch is chosen
+    on val, so reporting it would be optimistic; best.pt is kept only for reference."""
+    out_dir = Path(out_dir)
+    seed_everything(cfg["seed"])
+    model = build_model(cfg)
+    train(model, FrameDataset(train_frames, train_targets, cfg, train=True),
+          FrameDataset(val_frames.iloc[::cfg["val_step_epoch"]], val_targets, cfg), val_gt, cfg, out_dir)
+    del model
+    torch.cuda.empty_cache()
+    return evaluate_checkpoint(name, cfg, out_dir / "last.pt", val_frames, val_targets, val_gt, out_dir)
+
+
+def completed_runs(roots=(Path("/kaggle/working"), Path("/kaggle/input"))):
+    """metrics.json of every finished run under `roots`, keyed by run name (first root wins)."""
+    runs = {}
+    for root in map(Path, roots):
+        for p in sorted(root.rglob("metrics.json")) if root.exists() else []:
+            m = json.loads(p.read_text())
+            if m["name"] in runs:
+                continue
+            m["dir"] = p.parent
+            hist = p.parent / "history.csv"
+            m["history"] = pd.read_csv(hist) if hist.exists() else None
+            runs[m["name"]] = m
+    return runs
+
+
+def run_all(names, experiments, protocol, train_frames, train_targets, val_frames, val_targets, val_gt, work):
+    """Train what has not been trained; re-evaluate runs trained earlier but evaluated with older code
+    (best.pt, no per-clip mAP) from their attached last.pt. Every finished run is saved immediately."""
+    for name in names:
+        cfg = {**protocol, **experiments[name]}
+        done = completed_runs((work, Path("/kaggle/input")))
+        if name in done and done[name].get("weights") == "last.pt" and "per_clip_mAP" in done[name]:
+            print(f"{name}: done")
+            continue
+        if name in done and (done[name]["dir"] / "last.pt").exists():
+            print(f"{name}: re-evaluating last.pt")
+            m = evaluate_checkpoint(name, cfg, done[name]["dir"] / "last.pt", val_frames, val_targets, val_gt,
+                                    work / "runs" / name, history=done[name]["dir"] / "history.csv")
+        else:
+            print(f"{name}: training {experiments[name]}")
+            m = run_experiment(name, cfg, train_frames, train_targets, val_frames, val_targets, val_gt,
+                               work / "runs" / name)
+        print({k: round(m[k], 4) for k in ["mAP", "AP50", "AP75", "AP_small"]}, m["ms_per_image"], "ms/image")
+
+
+def comparison_tables(runs, classes, names=None):
+    """Main metrics, per-class AP and per-clip mAP of the selected runs."""
+    sel = {n: m for n, m in runs.items() if names is None or n in names}
+    cols = ["mAP", "AP50", "AP75", "AP_small", "AP_medium", "AP_large", "AR500", "ms_per_image"]
+    main = pd.DataFrame({n: {c: m.get(c) for c in cols} for n, m in sel.items()}).T.astype(float).round(4)
+    per_class = pd.DataFrame({n: {c: m.get(f"AP_{c}") for c in classes} for n, m in sel.items()}).T.round(4)
+    per_clip = pd.DataFrame({n: m.get("per_clip_mAP", {}) for n, m in sel.items()}).T
+    return main, per_class, per_clip
+
+
+def load_run_model(name, cfg, roots=(Path("/kaggle/working"), Path("/kaggle/input"))):
+    """Model of a finished run from its last.pt, wherever it was saved or attached."""
+    ckpt = next(p for root in map(Path, roots) if root.exists() for p in root.rglob(f"{name}/last.pt"))
+    model = build_model({**cfg, "pretrained": False})
+    model.load_state_dict(torch.load(ckpt, map_location="cpu"))
+    return model
+
+
+def predict_test(model, cfg, data_root):
+    """Detections for every test frame, keyed by the submission image_id."""
+    test = pd.read_csv(Path(data_root) / "test_images.csv")
+    frames = pd.DataFrame({"path": [str(Path(data_root) / f) for f in test["file_name"]]})
+    dets, _ = predict(model, FrameDataset(frames, {}, cfg), cfg)
+    dets["image_id"] = dets.pop("file_name").map(dict(zip(frames["path"], test["image_id"])))
+    return dets
+
+
+# ---------------------------------------------------------------- two-stage analysis
+
+@torch.no_grad()
+def proposal_sweep(model, ds, val_gt, cfg, counts=(100, 300, 1000, 2000)):
+    """Same Faster R-CNN weights, different numbers of RPN proposals kept at test time."""
+    pre, post = dict(model.rpn._pre_nms_top_n), dict(model.rpn._post_nms_top_n)
+    rows = []
+    for n in counts:
+        model.rpn._pre_nms_top_n["testing"] = max(n, pre["testing"])
+        model.rpn._post_nms_top_n["testing"] = n
+        dets, _ = predict(model, ds, cfg)
+        m = coco_evaluate(val_gt, dets, file_names=ds.frames["path"])
+        rows.append({"proposals": n, **{k: round(m[k], 4) for k in ["mAP", "AP50", "AP_small", "AR500"]},
+                     "ms_per_image": round(measure_speed(model, ds, n=50), 1)})
+    model.rpn._pre_nms_top_n.update(pre)
+    model.rpn._post_nms_top_n.update(post)
+    return pd.DataFrame(rows)
+
+
+@torch.no_grad()
+def two_stage_breakdown(model, ds, n_frames=300, top_n=(100, 300, 1000), score_thr=0.05, seed=0):
+    """What each Faster R-CNN stage contributes, by object size at network input.
+
+    RPN: share of GT boxes covered (IoU >= 0.5) by the top-n proposals, and the best proposal IoU.
+    Second stage: share covered by final detections (score >= score_thr) and their best IoU;
+    the IoU gain is the box refinement, classification is measured by AP.
+    """
+    device = _device()
+    model.to(device).eval()
+    captured = {}
+    hooks = [model.rpn.register_forward_hook(lambda m, i, o: captured.__setitem__("proposals", o[0])),
+             model.transform.register_forward_hook(lambda m, i, o: captured.__setitem__("sizes", o[0].image_sizes))]
+    rows = []
+    for i in random.Random(seed).sample(range(len(ds)), min(n_frames, len(ds))):
+        img, target, _ = ds[i]
+        gt = target["boxes"]
+        if not len(gt):
+            continue
+        with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
+            out = model([img.to(device)])[0]
+        th, tw = captured["sizes"][0]
+        props = captured["proposals"][0].float().cpu() * torch.tensor(
+            [img.shape[2] / tw, img.shape[1] / th, img.shape[2] / tw, img.shape[1] / th])
+        dets = out["boxes"][out["scores"] >= score_thr].float().cpu()
+        row = {"side": ((gt[:, 2] - gt[:, 0]) * (gt[:, 3] - gt[:, 1])).sqrt().numpy()}
+        for n in top_n:
+            row[f"rpn_recall@{n}"] = (box_iou(gt, props[:n]).max(1).values >= 0.5).numpy() if len(props) else 0
+        row["rpn_best_iou"] = box_iou(gt, props).max(1).values.numpy() if len(props) else 0.0
+        row["final_best_iou"] = box_iou(gt, dets).max(1).values.numpy() if len(dets) else 0.0
+        row["final_recall"] = row["final_best_iou"] >= 0.5
+        rows.append(pd.DataFrame(row))
+    for h in hooks:
+        h.remove()
+    df = pd.concat(rows, ignore_index=True)
+    df["size"] = pd.cut(df["side"], [0, 16, 32, 64, np.inf], labels=["<16", "16-32", "32-64", ">64"])
+    recall_cols = [c for c in df.columns if "recall" in c]
+    table = df.groupby("size", observed=True).agg(
+        objects=("side", "size"), **{c: (c, "mean") for c in recall_cols},
+        rpn_median_iou=("rpn_best_iou", "median"), final_median_iou=("final_best_iou", "median"))
+    table.index = table.index.astype(str)
+    table.loc["all"] = [len(df), *[df[c].mean() for c in recall_cols],
+                        df["rpn_best_iou"].median(), df["final_best_iou"].median()]
+    return table.round(3)
 
 
 @torch.no_grad()

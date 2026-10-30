@@ -110,6 +110,10 @@ _TODO_
 |---|---|---|---|---|---|
 | YOLO11s baseline (Ultralytics defaults, 20 epochs, no ignore masking) | 0.204 | 0.397 | 0.101 | 26.8 | 0.233 |
 | RetinaNet, default anchors (protocol) | 0.180 | 0.346 | 0.063 | 52.5 | — |
+| RetinaNet, anchors 16–256 | 0.164 | 0.359 | 0.072 | 55.1 | — |
+| RetinaNet, anchors 16–256 + IoU 0.4/0.3 | 0.162 | 0.348 | 0.076 | 53.6 | — |
+| RetinaNet, anchors 16–256 + IoU 0.4/0.3 + γ=1.5 | 0.164 | 0.351 | 0.069 | 53.6 | — |
+| RetinaNet, default anchors, γ=0 (no focal term) | 0.189 | 0.359 | 0.068 | 51.2 | 0.180 |
 
 ## Conclusion
 

@@ -75,6 +75,17 @@ def coco_evaluate(gt_json, detections, file_names=None, per_class=False):
     return stats
 
 
+def per_clip_map(gt_json, detections, file_names):
+    """mAP of every clip separately: with only 7 val clips, it shows whether a difference between
+    two models is consistent across scenes or comes from one clip."""
+    det = pd.DataFrame(detections)
+    files = pd.Series([str(f) for f in file_names])
+    clip_of = lambda f: image_key(f).split("/")[0]  # noqa: E731
+    det_clip = det["file_name"].map({f: clip_of(f) for f in det["file_name"].unique()})
+    return {clip: round(coco_evaluate(gt_json, det[det_clip == clip], file_names=fs.tolist())["mAP"], 4)
+            for clip, fs in files.groupby(files.map(clip_of))}
+
+
 def boxes_xyxy_to_xywh(xyxy):
     xyxy = np.asarray(xyxy, dtype=float).reshape(-1, 4)
     return np.column_stack([xyxy[:, 0], xyxy[:, 1], xyxy[:, 2] - xyxy[:, 0], xyxy[:, 3] - xyxy[:, 1]])
