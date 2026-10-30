@@ -366,7 +366,7 @@ def completed_runs(roots=(Path("/kaggle/working"), Path("/kaggle/input"))):
     runs = {}
     for root in map(Path, roots):
         for p in sorted(root.rglob("metrics.json")) if root.exists() else []:
-            m = json.loads(p.read_text())
+            m = json.loads(p.read_text(encoding="utf-8-sig"))
             if m["name"] in runs:
                 continue
             m["dir"] = p.parent
