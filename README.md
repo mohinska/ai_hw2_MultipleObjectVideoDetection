@@ -49,7 +49,3 @@ src/vod/      data loading, models and training, COCO evaluation, error analysis
 report.md
 images/
 ```
-
-`index.html`, `assets/` and `.github/` belong to the report template and are not changed.
-
-##
