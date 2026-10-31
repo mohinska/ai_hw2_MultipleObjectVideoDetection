@@ -17,7 +17,6 @@ from torchvision.models.detection import (fasterrcnn_resnet50_fpn_v2, fcos_resne
                                           retinanet_resnet50_fpn_v2)
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from torchvision.models.detection.fcos import FCOSClassificationHead
 from torchvision.models.detection.retinanet import RetinaNetClassificationHead
 from torchvision.models.detection.image_list import ImageList
 from torchvision.ops import box_iou, sigmoid_focal_loss
@@ -245,8 +244,14 @@ def build_model(cfg):
             alpha=cfg.get("focal_alpha", 0.25), gamma=cfg.get("focal_gamma", 2.0))
     elif arch == "fcos":
         m = fcos_resnet50_fpn(**common, detections_per_img=cfg.get("max_det", 500),
-                              score_thresh=cfg.get("score_thresh", 0.001))
-        m.head.classification_head = FCOSClassificationHead(256, 1, n)
+                              score_thresh=cfg.get("score_thresh", 0.001),
+                              center_sampling_radius=cfg.get("center_sampling_radius", 1.5))
+        # replace only the last conv: the pretrained 4-conv tower (and the box/centerness branches) are kept
+        head = m.head.classification_head
+        head.cls_logits = torch.nn.Conv2d(256, n, 3, padding=1)
+        torch.nn.init.normal_(head.cls_logits.weight, std=0.01)
+        torch.nn.init.constant_(head.cls_logits.bias, -math.log(99))  # prior 0.01, as in the focal-loss paper
+        head.num_classes = n
     else:
         raise ValueError(arch)
     return m
@@ -527,6 +532,37 @@ def anchor_match_stats(frames, targets, sizes, ratios, imgsz, fg_iou, n_frames=2
     table.loc["all"] = [len(df), df["best_iou"].median(), (df["positives"] == 0).mean(), df["positives"].median()]
     table.attrs["anchors_per_image"] = int(img["anchors"])
     table.attrs["negative_to_positive"] = round(img["anchors"] / max(img["positive_anchors"], 1))
+    return table.round(3)
+
+
+def fcos_positive_locations(boxes, stride, radius):
+    """FCOS locations (grid points k * stride) that are positive for each xyxy box.
+
+    A location is positive if it lies inside the box and within `radius * stride` of the box centre
+    (torchvision's centre sampling; ignores the per-level size range and overlaps between boxes).
+    """
+    centre = (boxes[:, :2] + boxes[:, 2:]) / 2
+    lo = np.maximum(boxes[:, :2], centre - radius * stride)
+    hi = np.minimum(boxes[:, 2:], centre + radius * stride)
+    per_axis = np.maximum(np.floor(hi / stride) - np.ceil(lo / stride) + 1, 0)
+    return (per_axis[:, 0] * per_axis[:, 1]).astype(int)
+
+
+def fcos_assignment_stats(frames, targets, imgsz, radius, stride=8):
+    """Positive locations per training box at the finest FCOS level, by object size at network input."""
+    rows = []
+    for _, r in frames.iterrows():
+        boxes = targets[r["id"]][0] * (imgsz / max(r["width"], r["height"]))
+        if len(boxes):
+            rows.append(pd.DataFrame({"side": np.sqrt((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])),
+                                      "positives": fcos_positive_locations(boxes, stride, radius)}))
+    df = pd.concat(rows, ignore_index=True)
+    df["size"] = pd.cut(df["side"], [0, 16, 32, 64, np.inf], labels=["<16", "16-32", "32-64", ">64"])
+    table = df.groupby("size", observed=True).agg(
+        objects=("side", "size"), no_positive=("positives", lambda p: (p == 0).mean()),
+        median_positives=("positives", "median"))
+    table.index = table.index.astype(str)
+    table.loc["all"] = [len(df), (df["positives"] == 0).mean(), df["positives"].median()]
     return table.round(3)
 
 
