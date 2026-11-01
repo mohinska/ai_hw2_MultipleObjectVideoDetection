@@ -1,6 +1,7 @@
 """Ultralytics YOLO under the common protocol: masked training copy, training and evaluation."""
 
 import json
+import random
 import time
 from pathlib import Path
 
@@ -27,6 +28,7 @@ def write_dataset(frames, targets, out_dir, degrade_p=0.0, max_side=1920, seed=S
     out_dir = Path(out_dir)
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
     (out_dir / "labels").mkdir(parents=True, exist_ok=True)
+    random.seed(seed)  # tv.augment draws from `random`, the choice of frames to degrade from numpy
     np.random.seed(seed)
     images = []
     for r in frames.itertuples():
