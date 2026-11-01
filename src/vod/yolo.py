@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 import pandas as pd
 import yaml
-from ultralytics import YOLO
+from ultralytics import RTDETR, YOLO
+from ultralytics.models.utils.loss import RTDETRDetectionLoss
 
 from . import CLASSES, SEED
 from .evaluate import coco_evaluate, per_clip_map
@@ -69,18 +70,31 @@ def write_data_yaml(path, train_images, val_images):
     return path
 
 
+def load_ultralytics(path):
+    """YOLO or RT-DETR model from a config or weights file; RT-DETR runs have it in their name."""
+    return RTDETR(str(path)) if "rtdetr" in str(path) else YOLO(str(path))
+
+
 def build_yolo(cfg):
     """Pretrained weights, or a model config with the pretrained layers that fit (P2 head)."""
     if cfg.get("model"):
-        model = YOLO(str(cfg["model"]))
+        model = load_ultralytics(cfg["model"])
         return model.load(cfg["weights"]) if cfg.get("weights") else model
-    return YOLO(cfg["weights"])
+    return load_ultralytics(cfg["weights"])
 
 
 def train_yolo(name, cfg, data_yaml, work):
-    """Train under `cfg`; keys other than model, weights and degrade_p go to Ultralytics as they are."""
-    args = {k: v for k, v in cfg.items() if k not in ("model", "weights", "degrade_p")}
+    """Train under `cfg`; keys other than model, weights, degrade_p and loss_gain go to Ultralytics as they are.
+
+    loss_gain: weights of the RT-DETR loss terms, which Ultralytics has no argument for.
+    """
+    args = {k: v for k, v in cfg.items() if k not in ("model", "weights", "degrade_p", "loss_gain")}
     model = build_yolo(cfg)
+    if cfg.get("loss_gain"):
+        def set_loss_gain(trainer):
+            trainer.model.criterion = RTDETRDetectionLoss(nc=trainer.data["nc"], loss_gain=cfg["loss_gain"], use_vfl=True)
+            print("loss gains:", trainer.model.criterion.loss_gain)
+        model.add_callback("on_train_start", set_loss_gain)
     model.train(data=str(data_yaml), seed=SEED, deterministic=True, project=str(Path(work) / "runs"), name=name,
                 exist_ok=True, **args)
     return Path(work) / "runs" / name
@@ -89,7 +103,7 @@ def train_yolo(name, cfg, data_yaml, work):
 def evaluate_yolo(name, cfg, run_dir, val_frames, val_gt, weights="last.pt"):
     """The same evaluation as for the torchvision detectors, saved as metrics.json and history.csv."""
     run_dir = Path(run_dir)
-    detect = yolo_detector(YOLO(run_dir / "weights" / weights), imgsz=cfg["imgsz"])
+    detect = yolo_detector(load_ultralytics(run_dir / "weights" / weights), imgsz=cfg["imgsz"])
     paths = val_frames["path"].tolist()
     dets = collect_view(detect, paths, "full")
     metrics = coco_evaluate(val_gt, dets, file_names=paths, per_class=True)
