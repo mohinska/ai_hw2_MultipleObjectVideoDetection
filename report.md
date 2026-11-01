@@ -106,18 +106,22 @@ _TODO_
 
 ## Results
 
-| Type | Model | mAP | AP50 | AP_small | ms / image | Public LB |
-|---|---|---|---|---|---|---|
-| one-stage anchor-free | YOLO11s baseline (Ultralytics defaults, 20 epochs, no ignore masking) | 0.204 | 0.397 | 0.101 | 26.8 | 0.233 |
-| two-stage anchor-based | Faster R-CNN, default (protocol) | 0.208 | 0.424 | 0.108 | 62.7 | 0.224 |
-| two-stage anchor-based | Faster R-CNN, RoI positive fraction 0.5 | 0.198 | 0.405 | 0.083 | 65.1 | — |
-| two-stage anchor-based | Faster R-CNN, RPN anchors 16–256 | 0.206 | 0.437 | 0.100 | 64.6 | — |
-| two-stage anchor-based | Faster R-CNN, box regression loss ×2 | 0.208 | 0.422 | 0.096 | 64.5 | — |
-| one-stage anchor-based | RetinaNet, default anchors (protocol) | 0.180 | 0.346 | 0.063 | 52.5 | — |
-| one-stage anchor-based | RetinaNet, anchors 16–256 | 0.164 | 0.359 | 0.072 | 55.1 | — |
-| one-stage anchor-based | RetinaNet, anchors 16–256 + IoU 0.4/0.3 | 0.162 | 0.348 | 0.076 | 53.6 | — |
-| one-stage anchor-based | RetinaNet, anchors 16–256 + IoU 0.4/0.3 + γ=1.5 | 0.164 | 0.351 | 0.069 | 53.6 | — |
-| one-stage anchor-based | RetinaNet, default anchors, γ=0 (no focal term) | 0.189 | 0.359 | 0.068 | 51.2 | 0.180 |
+| Model | mAP | AP50 | AP_small | ms / image | Public LB |
+|---|---|---|---|---|---|
+| YOLO11s baseline (Ultralytics defaults, 20 epochs, no ignore masking) | 0.204 | 0.397 | 0.101 | 26.8 | 0.233 |
+| Faster R-CNN, default (protocol) | 0.208 | 0.424 | 0.108 | 62.7 | 0.224 |
+| Faster R-CNN, RoI positive fraction 0.5 | 0.198 | 0.405 | 0.083 | 65.1 | — |
+| Faster R-CNN, RPN anchors 16–256 | 0.206 | 0.437 | 0.100 | 64.6 | — |
+| Faster R-CNN, box regression loss ×2 | 0.208 | 0.422 | 0.096 | 64.5 | — |
+| RetinaNet, default anchors (protocol) | 0.180 | 0.346 | 0.063 | 52.5 | — |
+| RetinaNet, anchors 16–256 | 0.164 | 0.359 | 0.072 | 55.1 | — |
+| RetinaNet, anchors 16–256 + IoU 0.4/0.3 | 0.162 | 0.348 | 0.076 | 53.6 | — |
+| RetinaNet, anchors 16–256 + IoU 0.4/0.3 + γ=1.5 | 0.164 | 0.351 | 0.069 | 53.6 | — |
+| RetinaNet, default anchors, γ=0 (no focal term) | 0.189 | 0.359 | 0.068 | 51.2 | 0.180 |
+| FCOS, default (centre sampling radius 1.5) | 0.178 | 0.357 | 0.079 | 47.8 | 0.233 |
+| FCOS, radius 0.5 | 0.173 | 0.360 | 0.076 | 48.0 | — |
+| FCOS, radius 2.5 | 0.168 | 0.334 | 0.072 | 47.8 | — |
+| FCOS, box regression loss ×2 | 0.177 | 0.355 | 0.076 | 48.2 | — |
 
 ## Conclusion
 
