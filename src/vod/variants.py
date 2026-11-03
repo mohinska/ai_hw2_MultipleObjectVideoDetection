@@ -9,6 +9,7 @@ import torch
 from torchvision.ops import batched_nms
 
 from .evaluate import MAX_DETS, coco_evaluate, per_clip_map
+from .fusion import wbf
 from .tv import _device, resize_long_side
 
 TILE_SHARE = 0.6  # side of a tile relative to the frame: 2 x 2 tiles overlapping by 20% of the frame
@@ -117,10 +118,13 @@ def collect_view(detect, paths, view, max_side=None, batch=4):
     return dets
 
 
-def merge_views(views, iou=None, max_det=MAX_DETS):
-    """Class-wise NMS over all views (iou=None keeps the boxes as they are) and the top max_det per image."""
+def merge_views(views, iou=None, max_det=MAX_DETS, fuse="nms"):
+    """Class-wise NMS (or fuse="wbf": weighted boxes fusion) over all views (iou=None keeps the boxes as they are)
+    and the top max_det per image."""
     det = pd.concat(views, ignore_index=True)
-    if iou is not None and len(det):
+    if iou is not None and len(det) and fuse == "wbf":
+        det = wbf(det, iou, n_models=len(views))
+    elif iou is not None and len(det):
         xy = det[["x", "y", "w", "h"]].to_numpy()
         boxes = torch.from_numpy(np.column_stack([xy[:, :2], xy[:, :2] + xy[:, 2:]]))
         group = pd.factorize(det["file_name"])[0] * 100 + det["cls"].to_numpy().astype(int)
@@ -133,7 +137,7 @@ def compare_variants(views, variants, gt_json, paths, ref, clips=True):
     """mAP of every variant ({name: dict(views=[...], iou=...)}), and in how many clips it beats `ref`."""
     rows, per_clip = {}, {}
     for name, v in variants.items():
-        dets = merge_views([views[n] for n in v["views"]], v.get("iou"))
+        dets = merge_views([views[n] for n in v["views"]], v.get("iou"), fuse=v.get("fuse", "nms"))
         m = coco_evaluate(gt_json, dets, file_names=paths)
         rows[name] = {k: round(m[k], 4) for k in ["mAP", "AP50", "AP75", "AP_small", "AR500"]}
         rows[name]["ms_per_frame"] = sum(views[n].attrs["ms_per_frame"] for n in v["views"])

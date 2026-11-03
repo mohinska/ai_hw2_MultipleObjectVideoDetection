@@ -38,7 +38,7 @@ Every detector is trained under one fixed protocol (`src/vod/protocol.py`): same
 | 3. Two-stage anchor-based | Faster R-CNN: RPN proposals, RoI sampling, box loss, failure cases | [03_faster_rcnn](notebooks/03_faster_rcnn.ipynb) |
 | 4. One-stage anchor-based | RetinaNet: anchors from data, IoU thresholds, focal loss | [04_retinanet](notebooks/04_retinanet.ipynb) |
 | 5. One-stage anchor-free | FCOS: centre-sampling radius, box loss, breakdown by object size | [05_fcos](notebooks/05_fcos.ipynb) + [05_yolo_anchor_free](notebooks/05_yolo_anchor_free.ipynb) |
-| 6. Query-based | RT-DETR: queries, losses, same compute budget | — |
+| 6. Query-based | RT-DETR: queries, losses, same compute budget | [06_rtdetr](notebooks/06_rtdetr.ipynb) |
 | 7. Final pipeline | best model plus data and inference strategies, submission | — |
 
 ## Repository
