@@ -122,6 +122,17 @@ _TODO_
 | FCOS, radius 0.5 | 0.173 | 0.360 | 0.076 | 48.0 | — |
 | FCOS, radius 2.5 | 0.168 | 0.334 | 0.072 | 47.8 | — |
 | FCOS, box regression loss ×2 | 0.177 | 0.355 | 0.076 | 48.2 | — |
+| RT-DETR-L, default (lr 1e-4, 10 epochs) | 0.222 | 0.429 | 0.100 | 154.7 | — |
+| RT-DETR-L, lr 3e-4 | 0.260 | 0.494 | 0.117 | 153.2 | — |
+| RT-DETR-L, GIoU loss weight 4 (default 2) | 0.110 | 0.210 | 0.052 | 154.8 | — |
+
+Inference variants (notebook 07), every 5th val frame, so the numbers are not comparable with the table above. `full` is one pass over the frame; `flip_tiles_nms65` adds the mirrored frame and four overlapping tiles, merged by class-wise NMS (IoU 0.65). The ensemble merges the two models' detections by NMS (IoU 0.5).
+
+| Model | mAP, `full` | mAP, best variant | mAP at 960 px, `full` | mAP at 960 px, best variant | clips improved (of 7) | ms / frame |
+|---|---|---|---|---|---|---|
+| RT-DETR-L, lr 3e-4 (`flip_tiles_nms65`) | 0.264 | 0.287 | 0.255 | 0.265 | 7 | 1011 |
+| YOLO, run `yolo_m` (`flip_tiles_nms65`) | 0.221 | 0.253 | 0.226 | 0.255 | 7 | 492 |
+| Ensemble of both | — | 0.289 | — | 0.276 | 5 | — |
 
 ## Conclusion
 

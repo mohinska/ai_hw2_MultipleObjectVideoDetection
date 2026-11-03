@@ -13,13 +13,17 @@ def iou_matrix(a, b):
     return inter / np.maximum(area(a)[:, None] + area(b)[None] - inter, 1e-9)
 
 
-def wbf(det, iou, n_models):
-    """Fuse det (file_name, cls, score, x, y, w, h) per image and class.
+def wbf(det, iou, weights):
+    """Fuse det (file_name, cls, score, x, y, w, h, and src = index into `weights`, default 0) per image and class.
 
-    Boxes go in by descending score and join the cluster whose fused box they overlap by more than `iou`.
-    A fused box is the score-weighted mean of its members and its score their mean, scaled by
-    min(members, n_models) / n_models: a box that only one of the n_models sources found is down-weighted.
+    Scores are first multiplied by the weight of their source. Boxes go in by descending score and join the
+    cluster whose fused box they overlap by more than `iou`. A fused box is the score-weighted mean of its members
+    and its score their mean, scaled by min(members, len(weights)) / sum(weights): a box that only one of the
+    sources found is down-weighted. With equal weights this is the plain WBF of Solovyev et al.
     """
+    weights = np.asarray(weights, float)
+    src = det["src"].to_numpy() if "src" in det else np.zeros(len(det), int)
+    det = det.assign(score=det["score"].to_numpy() * weights[src])
     parts = []
     for (name, cls), g in det.groupby(["file_name", "cls"], sort=False):
         xy = g[["x", "y", "w", "h"]].to_numpy("float64")
@@ -43,7 +47,8 @@ def wbf(det, iou, n_models):
             fused[j] = bsum[j] / wsum[j]
         parts.append(pd.DataFrame({
             "x": fused[:k, 0], "y": fused[:k, 1], "w": fused[:k, 2] - fused[:k, 0], "h": fused[:k, 3] - fused[:k, 1],
-            "cls": cls, "score": wsum[:k] / cnt[:k] * np.minimum(cnt[:k], n_models) / n_models, "file_name": name}))
+            "cls": cls, "score": wsum[:k] / cnt[:k] * np.minimum(cnt[:k], len(weights)) / weights.sum(),
+            "file_name": name}))
     out = pd.concat(parts, ignore_index=True).astype({"x": "float32", "y": "float32", "w": "float32", "h": "float32",
                                                       "cls": "int8", "score": "float32"})
     return out[["x", "y", "w", "h", "cls", "score", "file_name"]]

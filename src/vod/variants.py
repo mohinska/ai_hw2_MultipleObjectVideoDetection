@@ -118,12 +118,14 @@ def collect_view(detect, paths, view, max_side=None, batch=4):
     return dets
 
 
-def merge_views(views, iou=None, max_det=MAX_DETS, fuse="nms"):
-    """Class-wise NMS (or fuse="wbf": weighted boxes fusion) over all views (iou=None keeps the boxes as they are)
-    and the top max_det per image."""
+def merge_views(views, iou=None, max_det=MAX_DETS, fuse="nms", weights=None):
+    """Class-wise NMS (or fuse="wbf": weighted boxes fusion, one weight per view, default 1) over all views
+    (iou=None keeps the boxes as they are) and the top max_det per image."""
+    if iou is not None and fuse == "wbf":
+        views = [v.assign(src=i) for i, v in enumerate(views)]
     det = pd.concat(views, ignore_index=True)
     if iou is not None and len(det) and fuse == "wbf":
-        det = wbf(det, iou, n_models=len(views))
+        det = wbf(det, iou, weights if weights is not None else np.ones(len(views)))
     elif iou is not None and len(det):
         xy = det[["x", "y", "w", "h"]].to_numpy()
         boxes = torch.from_numpy(np.column_stack([xy[:, :2], xy[:, :2] + xy[:, 2:]]))
