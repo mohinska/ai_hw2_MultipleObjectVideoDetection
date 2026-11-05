@@ -30,7 +30,7 @@ def rescore(dets, file_names, window=1, iou=0.5, alpha=0.5):
     dets: file_name, cls, score, x, y, w, h. file_names: every frame of the split, also those without detections.
     A stable object keeps or gains score, a box seen in one frame only loses (1 - alpha) of it.
     """
-    # ponytail: link by IoU between neighbouring frames, no motion model; objects that move by more than
+    # link by IoU between neighbouring frames, no motion model; objects that move by more than
     # their size per frame lose the link. Add a tracker (Kalman / IoU tracks) only if val shows that.
     dets = dets.reset_index(drop=True)
     xy = dets[["x", "y", "w", "h"]].to_numpy("float32")
