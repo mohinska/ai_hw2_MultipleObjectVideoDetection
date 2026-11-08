@@ -59,7 +59,7 @@ def fold_ensemble(name, predict_fn, paths, work, n_folds=N_FOLDS, iou=0.55):
     """Every fold model ({name}_fold{k}.pt) predicts `paths`; the predictions are fused by WBF.
 
     Together the fold models have seen every labelled clip, while each single one missed a quarter of them.
-    The ensemble cannot be scored on OOF (each frame was held out from only one model), only on the leaderboard.
+    The models are evaluated out-of-fold; the gain of the ensemble is measured on the leaderboard.
     """
     dets = []
     for k in range(n_folds):
