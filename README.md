@@ -8,7 +8,7 @@ For every frame of 48 unlabelled test clips, predict boxes, classes and scores. 
 
 - **Classes:** person, bicycle, car, van, truck, tricycle, bus, motor.
 - **Metrics:** COCO mAP, AP50, AP_small and inference speed on val.
-- **Ignored regions:** crowds and "others" are not penalised. They are masked in training and marked `iscrowd=1` in evaluation.
+- **Ignored regions:** crowds and "others" are not penalised. They are marked `iscrowd=1` in evaluation and masked in training (except the YOLO baseline, which trains on Ultralytics defaults).
 
 ## Team
 
@@ -25,11 +25,21 @@ For every frame of 48 unlabelled test clips, predict boxes, classes and scores. 
 | val | 7 | 2,846 | yes |
 | test | 48 | 3,811 | no |
 
-Train and val are split by clip, never by frame. Details: `notebooks/01_eda_preprocessing.ipynb`.
+Details: `notebooks/01_eda_preprocessing.ipynb`.
+
+## Validation
+
+Train and val are pooled (63 clips, 55 source flights) and split into **4 folds with `GroupKFold`, grouped by source flight**: clips cut from one flight (`uav0000013_00000_v`, `uav0000013_01073_v`) are always in the same fold, so nothing leaks between frames of one video.
+
+- For every fold a model is trained on the other folds (every 5th frame) and predicts every frame of the held-out fold. The out-of-fold (OOF) predictions cover each labelled frame once; **OOF mAP is the number models are compared by**.
+- The model kept per fold is the last epoch (`last.pt`), so no checkpoint is picked by looking at the held-out fold.
+- Learned preprocessing (e.g. k-means anchors) is fit on the training folds only.
+- Each run saves `cv_<name>.json`: config, seed, package versions and GPU, per-fold and OOF metrics.
 
 ## Plan
 
-Every detector is trained under one fixed protocol (`src/vod/protocol.py`): same data, resolution, epochs and evaluation.
+Every detector is trained under one fixed protocol: same folds, resolution, epochs and evaluation.
+Notebooks are being moved from the older `src/vod` (fixed train/val holdout) to `src/core` (grouped CV above); 02 already runs on `src/core`.
 
 | Step | Model | Notebook |
 |---|---|---|
@@ -45,7 +55,32 @@ Every detector is trained under one fixed protocol (`src/vod/protocol.py`): same
 
 ```
 notebooks/    one notebook per step above
-src/vod/      data loading, models and training, COCO evaluation, error analysis, submission
+src/core/     shared tools: data pool and folds, COCO evaluation, CV loop, submission, Ultralytics adapter
+src/vod/      older tools (fixed train/val holdout), used by notebooks not yet moved to src/core
 report.md
 images/
 ```
+
+### `src/core`
+
+| Module | What it does |
+|---|---|
+| `data.py` | `load_pool` (train + val frames and COCO ground truth with unique ids), `assign_folds` (grouped folds), `every_nth` (frame step), `find_data_root` |
+| `evaluate.py` | `coco_evaluate`: COCO mAP / AP50 / AP_small / per-class AP, ignored regions as `iscrowd=1`, up to 500 detections per image |
+| `cv.py` | `run_cv`: the cross-validation loop for any model, resumable from saved folds; `cv_table`; `environment` (versions + GPU) |
+| `yolo.py` | `make_yolo_fns`: Ultralytics training and prediction plugged into `run_cv`; `plot_curves` from `results.csv` |
+| `submission.py` | `write_submission`: Kaggle CSV plus format checks (ids, ≤ 500 boxes, class range, pixel coordinates) |
+
+A model family plugs into the CV loop with two functions:
+
+```python
+train_fn(train_frames, held_out_frames, tag) -> weights_path
+predict_fn(weights_path, image_paths) -> (detections[key, cls, score, x, y, w, h], ms_per_image)
+result = run_cv(frames, gt, cfg, train_fn, predict_fn, work_dir)
+```
+
+Self-check on synthetic data: `python src/core/test_core.py` (needs pandas, scikit-learn, pyarrow and faster-coco-eval or pycocotools).
+
+### Running on Kaggle
+
+Attach the competition data and run the notebook. Its first cell clones this repository (`main`) to use `src/core`, so push changes before running. Outputs (fold weights, OOF predictions, metrics, `cv_<name>.json`, curves, submission) go to `/kaggle/working`. If a session hits the time limit, attach that output as input and rerun: finished folds are reused.
