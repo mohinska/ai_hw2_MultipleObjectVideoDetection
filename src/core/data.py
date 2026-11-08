@@ -68,3 +68,31 @@ def every_nth(frames, step):
     """Every `step`-th frame of each clip (neighbouring frames are near-duplicates)."""
     frames = frames.sort_values(["video", "frame_id"])
     return frames[frames.groupby("video").cumcount() % step == 0]
+
+
+def pool_targets(gt):
+    """uid -> (object boxes xyxy, cls 0-based, ignored regions xyxy), all float32/int64 in original pixels."""
+    anns = pd.DataFrame(gt["annotations"])
+    xyxy = np.array(anns["bbox"].tolist(), dtype="float32")
+    xyxy[:, 2:] += xyxy[:, :2]
+    anns = anns.assign(x1=xyxy[:, 0], y1=xyxy[:, 1], x2=xyxy[:, 2], y2=xyxy[:, 3])
+    empty = np.zeros((0, 4), "float32")
+    targets = {img["id"]: (empty, np.zeros(0, "int64"), empty) for img in gt["images"]}
+    cols = ["x1", "y1", "x2", "y2"]
+    for uid, g in anns.groupby("image_id"):
+        obj, ign = g[g["iscrowd"] == 0], g[g["iscrowd"] == 1]
+        targets[uid] = (obj[cols].to_numpy("float32"), (obj["category_id"] - 1).to_numpy("int64"),
+                        ign[cols].to_numpy("float32"))
+    return targets
+
+
+def covered_share(boxes, regions):
+    """Share of each xyxy box covered by xyxy `regions` (overlaps counted twice, clipped to 1)."""
+    if not len(boxes) or not len(regions):
+        return np.zeros(len(boxes), "float32")
+    ix = np.clip(np.minimum(boxes[:, None, 2], regions[None, :, 2])
+                 - np.maximum(boxes[:, None, 0], regions[None, :, 0]), 0, None)
+    iy = np.clip(np.minimum(boxes[:, None, 3], regions[None, :, 3])
+                 - np.maximum(boxes[:, None, 1], regions[None, :, 1]), 0, None)
+    area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+    return np.clip((ix * iy).sum(1) / np.maximum(area, 1e-6), 0, 1)

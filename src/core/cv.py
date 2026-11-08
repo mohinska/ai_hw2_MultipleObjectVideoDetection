@@ -40,16 +40,19 @@ def existing(name, work):
     return next((h for h in hits if h.exists()), None)
 
 
-def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS):
+def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS, folds=None):
     """Train on all folds but one, predict every frame of the held-out fold, for each fold.
 
-    Finished folds ({name}_fold{k}.pt + OOF parquet + metrics json, here or in /kaggle/input) are reused,
-    so a run cut off by the Kaggle time limit can be resumed. Writes cv_{name}.json with cfg and all metrics.
+    `folds` limits the run to some held-out folds (e.g. [0] for a hyperparameter sweep); the "oof" metrics
+    then cover only those folds' frames. Finished folds ({name}_fold{k}.pt + OOF parquet + metrics json,
+    here or in /kaggle/input) are reused, so a run cut off by the Kaggle time limit can be resumed.
+    Writes cv_{name}.json with cfg, environment and all metrics.
     """
     work = Path(work)
     frames = frames.assign(fold=frames["video"].map(assign_folds(frames, n_folds)))
+    folds = list(range(n_folds)) if folds is None else list(folds)
     fold_metrics, oof_parts = {}, []
-    for k in range(n_folds):
+    for k in folds:
         train = every_nth(frames[frames["fold"] != k], cfg["train_step"])
         held_out = frames[frames["fold"] == k]
         tag = f"{cfg['name']}_fold{k}"
@@ -70,9 +73,9 @@ def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS):
         print(f"  mAP {m['mAP']:.4f}  AP50 {m['AP50']:.4f}  AP_small {m['AP_small']:.4f}")
 
     oof = pd.concat(oof_parts, ignore_index=True)
-    oof_stats = coco_evaluate(oof, frames, gt, per_class=True)
+    oof_stats = coco_evaluate(oof, frames[frames["fold"].isin(folds)], gt, per_class=True)
     (work / f"cv_{cfg['name']}.json").write_text(json.dumps(
-        {"cfg": cfg, "n_folds": n_folds, "seed": SEED, "env": environment(),
+        {"cfg": cfg, "n_folds": n_folds, "folds_run": folds, "seed": SEED, "env": environment(),
          "folds": fold_metrics, "oof": oof_stats}, indent=1))
     return {"folds": fold_metrics, "oof": oof_stats, "oof_dets": oof}
 
@@ -87,3 +90,26 @@ def cv_table(result, cols=("mAP", "AP50", "AP_small", "AP_medium", "AP_large", "
     table.loc["OOF"] = pd.Series({c: result["oof"].get(c) for c in cols})
     table.loc["OOF", "ms_per_image"] = table.loc["mean", "ms_per_image"]
     return table
+
+
+def compare(names, work, fold=None, cols=("mAP", "AP50", "AP75", "AP_small", "AP_medium", "AP_large",
+                                          "AR500", "ms_per_image")):
+    """One row per run: metrics of held-out `fold` (metrics_{name}_fold{k}.json), or the OOF metrics of
+    cv_{name}.json when fold is None. Runs whose files are not found are skipped with a note."""
+    rows = {}
+    for name in names:
+        f = existing(f"metrics_{name}_fold{fold}.json" if fold is not None else f"cv_{name}.json", work)
+        if f is None:
+            print(f"{name}: not run yet")
+            continue
+        m = json.loads(f.read_text())
+        if fold is None:
+            m = {**m["oof"], "ms_per_image": pd.DataFrame(m["folds"]).T["ms_per_image"].mean()}
+        rows[name] = {c: m.get(c) for c in cols}
+    return pd.DataFrame(rows).T.astype(float)
+
+
+def load_oof(name, folds, work):
+    """Saved OOF detections of a run for the given held-out folds."""
+    return pd.concat([pd.read_parquet(existing(f"oof_{name}_fold{k}.parquet", work)) for k in folds],
+                     ignore_index=True)

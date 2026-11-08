@@ -39,12 +39,12 @@ Train and val are pooled (63 clips, 55 source flights) and split into **4 folds 
 ## Plan
 
 Every detector is trained under one fixed protocol: same folds, resolution, epochs and evaluation.
-Notebooks are being moved from the older `src/vod` (fixed train/val holdout) to `src/core` (grouped CV above); 02 already runs on `src/core`.
+Notebooks are being moved from the older `src/vod` (fixed train/val holdout) to `src/core` (grouped CV above); 02 and 03 already run on `src/core`.
 
 | Step | Model | Notebook |
 |---|---|---|
 | 1. Data understanding | class balance, object sizes, density, ignored regions | [01_eda_preprocessing](notebooks/01_eda_preprocessing.ipynb) |
-| 2. Baseline | YOLO11s, Ultralytics defaults | [02_baseline_yolo](notebooks/02_baseline_yolo.ipynb) |
+| 2. Baseline | YOLO11s, Ultralytics defaults | [02_baseline](notebooks/02_baseline.ipynb) |
 | 3. Two-stage anchor-based | Faster R-CNN: RPN proposals, RoI sampling, box loss, failure cases | [03_faster_rcnn](notebooks/03_faster_rcnn.ipynb) |
 | 4. One-stage anchor-based | RetinaNet: anchors from data, IoU thresholds, focal loss | [04_retinanet](notebooks/04_retinanet.ipynb) |
 | 5. One-stage anchor-free | FCOS: centre-sampling radius, box loss, breakdown by object size | [05_fcos](notebooks/05_fcos.ipynb) + [05_yolo_anchor_free](notebooks/05_yolo_anchor_free.ipynb) |
@@ -65,10 +65,14 @@ images/
 
 | Module | What it does |
 |---|---|
-| `data.py` | `load_pool` (train + val frames and COCO ground truth with unique ids), `assign_folds` (grouped folds), `every_nth` (frame step), `find_data_root` |
+| `__init__.py` | `CLASSES`, `SEED`, `N_FOLDS`, and `PROTOCOL`: the fixed settings of the detector comparison (03-06) |
+| `data.py` | `load_pool` (train + val frames and COCO ground truth with unique ids), `assign_folds` (grouped folds), `every_nth` (frame step), `pool_targets` (boxes and ignored regions per frame), `find_data_root` |
 | `evaluate.py` | `coco_evaluate`: COCO mAP / AP50 / AP_small / per-class AP, ignored regions as `iscrowd=1`, up to 500 detections per image |
-| `cv.py` | `run_cv`: the cross-validation loop for any model, resumable from saved folds; `cv_table`; `environment` (versions + GPU) |
+| `cv.py` | `run_cv`: the cross-validation loop for any model, resumable from saved folds; `folds=[0]` for sweeps; `cv_table`, `compare` (runs side by side), `load_oof`, `environment` (versions + GPU) |
+| `tv.py` | torchvision Faster R-CNN: `FrameDataset` (resize, ignored-region masking, flip), `make_tv_fns` for `run_cv`, batch-1 speed, `two_stage_breakdown`, `proposal_sweep`, `plot_histories` |
+| `errors.py` | failure analysis: `match_detections` (missed / wrong class / poor box / duplicate / background), `outcome_tables`, `worst_frames`, `plot_failures` |
 | `yolo.py` | `make_yolo_fns`: Ultralytics training and prediction plugged into `run_cv`; `plot_curves` from `results.csv` |
+| `fusion.py` | `wbf` (Weighted Boxes Fusion) and `fold_ensemble`: every fold model predicts the test set, boxes are fused |
 | `submission.py` | `write_submission`: Kaggle CSV plus format checks (ids, ≤ 500 boxes, class range, pixel coordinates) |
 
 A model family plugs into the CV loop with two functions:
@@ -78,8 +82,6 @@ train_fn(train_frames, held_out_frames, tag) -> weights_path
 predict_fn(weights_path, image_paths) -> (detections[key, cls, score, x, y, w, h], ms_per_image)
 result = run_cv(frames, gt, cfg, train_fn, predict_fn, work_dir)
 ```
-
-Self-check on synthetic data: `python src/core/test_core.py` (needs pandas, scikit-learn, pyarrow and faster-coco-eval or pycocotools).
 
 ### Running on Kaggle
 
