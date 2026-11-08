@@ -104,6 +104,9 @@ def compare(names, work, fold=None, cols=("mAP", "AP50", "AP75", "AP_small", "AP
             continue
         m = json.loads(f.read_text())
         if fold is None:
+            if len(m.get("folds_run", m["folds"])) < m["n_folds"]:
+                print(f"{name}: only fold(s) {m['folds_run']} run, no full OOF")
+                continue
             m = {**m["oof"], "ms_per_image": pd.DataFrame(m["folds"]).T["ms_per_image"].mean()}
         rows[name] = {c: m.get(c) for c in cols}
     return pd.DataFrame(rows).T.astype(float)

@@ -1,4 +1,4 @@
-"""torchvision detectors (Faster R-CNN) as train_fn / predict_fn for core.cv.run_cv, plus two-stage analysis."""
+"""torchvision detectors (Faster R-CNN, RetinaNet) as train_fn / predict_fn for core.cv.run_cv, plus analysis."""
 
 import math
 import random
@@ -12,10 +12,12 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
-from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
+from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, retinanet_resnet50_fpn_v2
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from torchvision.ops import box_iou
+from torchvision.models.detection.image_list import ImageList
+from torchvision.models.detection.retinanet import RetinaNetClassificationHead
+from torchvision.ops import box_iou, sigmoid_focal_loss
 
 from . import CLASSES, SEED
 from .data import KAGGLE_INPUT, covered_share, every_nth, image_key
@@ -112,11 +114,50 @@ def make_loader(ds, cfg, shuffle):
 
 # ---------------------------------------------------------------- model
 
+RETINA_SIZES = (32, 64, 128, 256, 512)  # torchvision default base anchor size per FPN level P3-P7
+
+
+def retina_anchors(sizes, ratios):
+    """RetinaNet anchors: 3 octave scales (x1, x2^1/3, x2^2/3) of each base size; ratios are h/w."""
+    return AnchorGenerator(tuple(tuple(s * 2 ** (k / 3) for k in range(3)) for s in sizes),
+                           (tuple(ratios),) * len(sizes))
+
+
+class FocalClassificationHead(RetinaNetClassificationHead):
+    """torchvision's RetinaNet classification head with configurable focal-loss alpha and gamma."""
+
+    def __init__(self, in_channels, num_anchors, num_classes, alpha=0.25, gamma=2.0):
+        super().__init__(in_channels, num_anchors, num_classes, norm_layer=partial(torch.nn.GroupNorm, 32))
+        self.alpha, self.gamma = alpha, gamma
+
+    def compute_loss(self, targets, head_outputs, matched_idxs):
+        losses = []
+        for tgt, logits, matched in zip(targets, head_outputs["cls_logits"], matched_idxs):
+            fg = matched >= 0
+            gt = torch.zeros_like(logits)
+            gt[fg, tgt["labels"][matched[fg]]] = 1.0
+            valid = matched != self.BETWEEN_THRESHOLDS
+            losses.append(sigmoid_focal_loss(logits[valid], gt[valid], alpha=self.alpha, gamma=self.gamma,
+                                             reduction="sum") / max(1, fg.sum()))
+        return sum(losses) / len(targets)
+
+
 def build_model(cfg, pretrained=True):
-    """COCO-pretrained Faster R-CNN (ResNet-50 FPN v2) with an 8-class head; label 0 is background."""
+    """COCO-pretrained detector (cfg["arch"]: faster_rcnn | retinanet) with an 8-class head; label 0 is background."""
     w = "DEFAULT" if pretrained else None
+    common = dict(weights=w, weights_backbone=w, min_size=cfg["min_size"], max_size=cfg["imgsz"])
+    n = len(CLASSES) + 1
+    if cfg.get("arch", "faster_rcnn") == "retinanet":
+        m = retinanet_resnet50_fpn_v2(**common, detections_per_img=cfg["max_det"], score_thresh=cfg["score_thresh"],
+                                      fg_iou_thresh=cfg.get("fg_iou", 0.5), bg_iou_thresh=cfg.get("bg_iou", 0.4))
+        # 3 scales x 3 ratios per location as in the pretrained model, so the regression head still fits
+        m.anchor_generator = retina_anchors(cfg.get("anchor_sizes", RETINA_SIZES), cfg.get("aspect_ratios", (0.5, 1.0, 2.0)))
+        m.head.classification_head = FocalClassificationHead(
+            256, m.anchor_generator.num_anchors_per_location()[0], n,
+            alpha=cfg.get("focal_alpha", 0.25), gamma=cfg.get("focal_gamma", 2.0))
+        return m
     m = fasterrcnn_resnet50_fpn_v2(
-        weights=w, weights_backbone=w, min_size=cfg["min_size"], max_size=cfg["imgsz"],
+        **common,
         rpn_pre_nms_top_n_train=cfg.get("rpn_pre_nms_train", 2000),
         rpn_post_nms_top_n_train=cfg.get("rpn_post_nms_train", 2000),
         rpn_pre_nms_top_n_test=cfg.get("rpn_pre_nms_test", 1000),
@@ -125,8 +166,7 @@ def build_model(cfg, pretrained=True):
         box_positive_fraction=cfg.get("roi_pos_fraction", 0.25),
         box_detections_per_img=cfg["max_det"], box_score_thresh=cfg["score_thresh"],
     )
-    m.roi_heads.box_predictor = FastRCNNPredictor(m.roi_heads.box_predictor.cls_score.in_features,
-                                                  len(CLASSES) + 1)
+    m.roi_heads.box_predictor = FastRCNNPredictor(m.roi_heads.box_predictor.cls_score.in_features, n)
     if cfg.get("anchor_sizes"):
         # one size and three ratios per FPN level, so the pretrained RPN head still fits
         m.rpn.anchor_generator = AnchorGenerator(tuple((s,) for s in cfg["anchor_sizes"]),
@@ -206,6 +246,8 @@ def predict(model, paths, cfg):
         with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
             outs = model([im.to(device, non_blocking=True) for im in imgs])
         for out, meta in zip(outs, metas):
+            keep = out["labels"] > 0  # sigmoid heads (RetinaNet) also score label 0, which is background
+            out = {k: v[keep] for k, v in out.items()}
             # back to original pixels; the resized frame is rounded up to whole pixels, so clip to the original size
             w, h = meta["size"]
             b = np.clip(out["boxes"].float().cpu().numpy() / meta["scale"], 0, [w, h, w, h])
@@ -343,4 +385,43 @@ def two_stage_breakdown(model, frames, targets, cfg, n_frames=300, top_n=(100, 3
     table.index = table.index.astype(str)
     table.loc["all"] = [len(df), *[df[c].mean() for c in recall_cols],
                         df["rpn_best_iou"].median(), df["final_best_iou"].median()]
+    return table.round(3)
+
+
+# ---------------------------------------------------------------- anchor analysis (one-stage)
+
+@torch.no_grad()
+def anchor_match_stats(frames, targets, sizes, ratios, imgsz, fg_iou, n_frames=200):
+    """How well a RetinaNet anchor set covers the boxes of `frames`, by object size at network input.
+
+    For each box: best IoU with any anchor and the number of anchors with IoU >= fg_iou (boxes with none
+    only get torchvision's single low-quality match). attrs: anchors per image, negatives per positive anchor.
+    """
+    gen = retina_anchors(sizes, ratios)
+    cache, rows, per_image = {}, [], []
+    for _, r in frames.sample(min(n_frames, len(frames)), random_state=SEED).iterrows():
+        scale = imgsz / max(r["width"], r["height"])
+        h, w = math.ceil(r["height"] * scale / 32) * 32, math.ceil(r["width"] * scale / 32) * 32
+        if (h, w) not in cache:
+            feats = [torch.zeros(1, 1, math.ceil(h / s), math.ceil(w / s)) for s in (8, 16, 32, 64, 128)]
+            cache[(h, w)] = gen(ImageList(torch.zeros(1, 3, h, w), [(h, w)]), feats)[0]
+        anchors = cache[(h, w)]
+        boxes = torch.from_numpy(targets[r["uid"]][0] * scale)
+        if not len(boxes):
+            continue
+        iou = box_iou(boxes, anchors)
+        pos = iou >= fg_iou
+        rows.append(pd.DataFrame({"side": ((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])).sqrt().numpy(),
+                                  "best_iou": iou.max(1).values.numpy(), "positives": pos.sum(1).numpy()}))
+        per_image.append({"anchors": len(anchors), "positive_anchors": int(pos.any(0).sum())})
+    df = pd.concat(rows, ignore_index=True)
+    df["size"] = pd.cut(df["side"], [0, 16, 32, 64, np.inf], labels=["<16", "16-32", "32-64", ">64"])
+    table = df.groupby("size", observed=True).agg(
+        objects=("side", "size"), median_best_iou=("best_iou", "median"),
+        no_positive_anchor=("positives", lambda p: (p == 0).mean()), median_positives=("positives", "median"))
+    table.index = table.index.astype(str)
+    img = pd.DataFrame(per_image).mean()
+    table.loc["all"] = [len(df), df["best_iou"].median(), (df["positives"] == 0).mean(), df["positives"].median()]
+    table.attrs["anchors_per_image"] = int(img["anchors"])
+    table.attrs["negative_to_positive"] = round(img["anchors"] / max(img["positive_anchors"], 1))
     return table.round(3)
