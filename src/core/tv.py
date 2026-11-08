@@ -1,4 +1,4 @@
-"""torchvision detectors (Faster R-CNN, RetinaNet) as train_fn / predict_fn for core.cv.run_cv, plus analysis."""
+"""torchvision detectors (Faster R-CNN, RetinaNet, FCOS) as train_fn / predict_fn for core.cv.run_cv, plus analysis."""
 
 import math
 import random
@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
-from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, retinanet_resnet50_fpn_v2
+from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, fcos_resnet50_fpn, retinanet_resnet50_fpn_v2
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.image_list import ImageList
@@ -143,7 +143,7 @@ class FocalClassificationHead(RetinaNetClassificationHead):
 
 
 def build_model(cfg, pretrained=True):
-    """COCO-pretrained detector (cfg["arch"]: faster_rcnn | retinanet) with an 8-class head; label 0 is background."""
+    """COCO-pretrained detector (cfg["arch"]: faster_rcnn | retinanet | fcos) with an 8-class head; label 0 is background."""
     w = "DEFAULT" if pretrained else None
     common = dict(weights=w, weights_backbone=w, min_size=cfg["min_size"], max_size=cfg["imgsz"])
     n = len(CLASSES) + 1
@@ -155,6 +155,16 @@ def build_model(cfg, pretrained=True):
         m.head.classification_head = FocalClassificationHead(
             256, m.anchor_generator.num_anchors_per_location()[0], n,
             alpha=cfg.get("focal_alpha", 0.25), gamma=cfg.get("focal_gamma", 2.0))
+        return m
+    if cfg.get("arch") == "fcos":
+        m = fcos_resnet50_fpn(**common, detections_per_img=cfg["max_det"], score_thresh=cfg["score_thresh"],
+                              center_sampling_radius=cfg.get("center_sampling_radius", 1.5))
+        # replace only the last conv: the pretrained 4-conv tower (and the box/centerness branches) are kept
+        head = m.head.classification_head
+        head.cls_logits = torch.nn.Conv2d(256, n, 3, padding=1)
+        torch.nn.init.normal_(head.cls_logits.weight, std=0.01)
+        torch.nn.init.constant_(head.cls_logits.bias, -math.log(99))  # prior 0.01, as in the focal-loss paper
+        head.num_classes = n
         return m
     m = fasterrcnn_resnet50_fpn_v2(
         **common,
@@ -246,7 +256,7 @@ def predict(model, paths, cfg):
         with torch.autocast(device.type, dtype=torch.float16, enabled=device.type == "cuda"):
             outs = model([im.to(device, non_blocking=True) for im in imgs])
         for out, meta in zip(outs, metas):
-            keep = out["labels"] > 0  # sigmoid heads (RetinaNet) also score label 0, which is background
+            keep = out["labels"] > 0  # sigmoid heads (RetinaNet, FCOS) also score label 0, which is background
             out = {k: v[keep] for k, v in out.items()}
             # back to original pixels; the resized frame is rounded up to whole pixels, so clip to the original size
             w, h = meta["size"]
@@ -424,4 +434,34 @@ def anchor_match_stats(frames, targets, sizes, ratios, imgsz, fg_iou, n_frames=2
     table.loc["all"] = [len(df), df["best_iou"].median(), (df["positives"] == 0).mean(), df["positives"].median()]
     table.attrs["anchors_per_image"] = int(img["anchors"])
     table.attrs["negative_to_positive"] = round(img["anchors"] / max(img["positive_anchors"], 1))
+    return table.round(3)
+
+
+# ---------------------------------------------------------------- location assignment (anchor-free)
+
+def fcos_positive_locations(boxes, stride, radius):
+    """FCOS locations (grid points k * stride) that are positive for each xyxy box: inside the box and within
+    `radius * stride` of its centre (torchvision's centre sampling; ignores the per-level size range)."""
+    centre = (boxes[:, :2] + boxes[:, 2:]) / 2
+    lo = np.maximum(boxes[:, :2], centre - radius * stride)
+    hi = np.minimum(boxes[:, 2:], centre + radius * stride)
+    per_axis = np.maximum(np.floor(hi / stride) - np.ceil(lo / stride) + 1, 0)
+    return (per_axis[:, 0] * per_axis[:, 1]).astype(int)
+
+
+def fcos_assignment_stats(frames, targets, imgsz, radius, stride=8, n_frames=500):
+    """Positive locations per box at the finest FCOS level (stride 8), by object size at network input."""
+    rows = []
+    for _, r in frames.sample(min(n_frames, len(frames)), random_state=SEED).iterrows():
+        boxes = targets[r["uid"]][0] * (imgsz / max(r["width"], r["height"]))
+        if len(boxes):
+            rows.append(pd.DataFrame({"side": np.sqrt((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])),
+                                      "positives": fcos_positive_locations(boxes, stride, radius)}))
+    df = pd.concat(rows, ignore_index=True)
+    df["size"] = pd.cut(df["side"], [0, 16, 32, 64, np.inf], labels=["<16", "16-32", "32-64", ">64"])
+    table = df.groupby("size", observed=True).agg(
+        objects=("side", "size"), no_positive=("positives", lambda p: (p == 0).mean()),
+        median_positives=("positives", "median"))
+    table.index = table.index.astype(str)
+    table.loc["all"] = [len(df), (df["positives"] == 0).mean(), df["positives"].median()]
     return table.round(3)
