@@ -106,6 +106,33 @@ _TODO_
 
 ## Results
 
+### Cross-validated baseline
+
+YOLO11s, Ultralytics defaults, 20 epochs, 1280 px, every 5th training frame, no ignore masking; last epoch per fold. Train + val pooled, 4 folds grouped by source flight, every frame of the held-out fold evaluated. Code: `notebooks/02_baseline.ipynb`; numbers: `reports/baseline/cv_baseline.json` (Tesla T4, ultralytics 8.4.207, torch 2.11.0, seed 42).
+
+| | mAP | AP50 | AP75 | AP_small | AP_medium | AP_large | ms / image |
+|---|---|---|---|---|---|---|---|
+| fold 0 | 0.195 | 0.367 | 0.179 | 0.039 | 0.148 | 0.337 | 35.6 |
+| fold 1 | 0.247 | 0.450 | 0.236 | 0.067 | 0.254 | 0.429 | 35.5 |
+| fold 2 | 0.156 | 0.321 | 0.131 | 0.050 | 0.167 | 0.313 | 35.7 |
+| fold 3 | 0.203 | 0.363 | 0.199 | 0.069 | 0.178 | 0.362 | 35.8 |
+| mean ± std | 0.200 ± 0.038 | 0.375 ± 0.054 | | 0.056 ± 0.014 | | | 35.6 |
+| **OOF (all 27,047 frames)** | **0.188** | **0.356** | **0.173** | **0.053** | **0.175** | **0.334** | |
+
+OOF AP per class: car 0.452, bus 0.281, person 0.201, tricycle 0.186, van 0.135, motor 0.123, bicycle 0.062, truck 0.060.
+
+Speed is Ultralytics' preprocess + inference + NMS per image, in chunks of 8, after one warm-up pass. Training took 1.5 h per fold on a T4 (Ultralytics defaults from `reports/baseline/fold*/args.yaml`: SGD-auto, lr0 0.01, AMP, mosaic with `close_mosaic` 10, scale 0.5, translate 0.1, horizontal flip 0.5).
+
+![Baseline training curves per fold](reports/baseline/curves_baseline.png)
+
+On the per-epoch curve (every 10th held-out frame), the best epoch scores 0.011–0.026 mAP above the last one in every fold. Keeping Ultralytics' `best.pt` would have chosen the epoch on the held-out fold and inflated the OOF score by about that much, so we keep the last epoch.
+
+The fold mAP ranges from 0.156 to 0.247 depending on which flights are held out, larger than most differences between the detector variants in the holdout table below, so single-split comparisons are not reliable. Small objects are the main weakness (AP_small 0.053 vs AP_large 0.334), and truck and bicycle score lowest: truck AP varies from 0.017 to 0.183 across folds, so its few clips dominate.
+
+### Fixed train/val holdout (earlier protocol)
+
+The table below uses the provided val split (7 clips) and is not comparable with the cross-validated numbers above.
+
 | Model | mAP | AP50 | AP_small | ms / image | Public LB |
 |---|---|---|---|---|---|
 | YOLO11s baseline (Ultralytics defaults, 20 epochs, no ignore masking) | 0.204 | 0.397 | 0.101 | 26.8 | 0.233 |
