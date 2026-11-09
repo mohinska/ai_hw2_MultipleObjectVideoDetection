@@ -1,0 +1,17 @@
+# Versions of the Kaggle environment the CV runs used (Python 3.13, Tesla T4, CUDA 13.0),
+# as recorded in reports/*/cv_*.json -> env.
+torch==2.11.0
+torchvision==0.26.0
+ultralytics==8.4.207
+faster-coco-eval==1.8.0
+pycocotools==2.0.11
+scikit-learn==1.6.1
+pandas==2.3.3
+numpy==2.1.3
+wandb==0.30.0
+# Not recorded per run; Kaggle image versions
+opencv-python
+pillow
+matplotlib
+pyyaml
+pyarrow
