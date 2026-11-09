@@ -1,5 +1,5 @@
 ---
-title: Homework 2 -- Multiple Object Video Detection
+title: Homework 2 - Multiple Object Video Detection
 author: Maryna Ohinska, Mariia Hamaniuk
 course: Artificial Intelligence · UCU
 date: 2026-11-10
@@ -156,8 +156,7 @@ Every run saves `cv_<name>.json` with its config, seed, package versions and GPU
 
 ## Conclusion
 
-_TODO_
-
+AI-usage: we used AI (Claude Opus 5.5) for generating code that is not connected to the final result itself (tables, plots e.g), to format some of our thoughts in the report, to correct grammar and punctuation both in notebooks and report.
 ## References
 
 - Data: Zhu et al., *Detection and Tracking Meet Drones Challenge* (VisDrone), arXiv:2001.06303.
