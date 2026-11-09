@@ -7,6 +7,7 @@ A model plugs in two functions:
 
 import json
 import platform
+import shutil
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -35,9 +36,17 @@ def environment(packages=("torch", "torchvision", "ultralytics", "faster-coco-ev
 
 
 def existing(name, work):
-    """A file from this run (work dir) or from an earlier run attached as Kaggle input, else None."""
-    hits = [Path(work) / name] + (sorted(KAGGLE_INPUT.rglob(name)) if KAGGLE_INPUT.exists() else [])
-    return next((h for h in hits if h.exists()), None)
+    """A file from this run (work dir) or from an earlier run attached as Kaggle input, else None.
+    A file found in the input is copied to `work`, so a resumed run's output is complete on its own."""
+    local = Path(work) / name
+    if local.exists():
+        return local
+    hit = next(iter(sorted(KAGGLE_INPUT.rglob(name))), None) if KAGGLE_INPUT.exists() else None
+    if hit is None:
+        return None
+    local.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(hit, local)
+    return local
 
 
 def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS, folds=None):
