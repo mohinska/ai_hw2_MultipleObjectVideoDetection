@@ -7,108 +7,71 @@ date: 2026-11-10
 
 ## Introduction
 
-_TODO_
+We detect 8 object classes (person, bicycle, car, van, truck, tricycle, bus, motor) in drone video frames from VisDrone2019-VID and submit boxes for 48 unlabelled test clips. The labelled data has **56 train clips (24,201 frames)** and **7 val clips (2,846 frames)** with 1.2 million objects.
+
+The data analysis showed four main difficulties:
+
+- **Small objects:** 24% of boxes are below 32² px, so the input resolution decides how many objects are visible at all.
+- **Dense scenes:** 42 objects per frame at the median and up to 180, so duplicate suppression and the detection limit matter.
+- **Class imbalance:** car and person are three quarters of the objects, bus is under 1%, while mAP weighs every class equally.
+- **Correlated frames and a shift to test:** neighbouring frames are near-duplicates, clips come from shared source flights, and the test set has darker and lower-resolution clips.
+
+We compare four detector families under one protocol and out-of-fold validation, next to a YOLO11s baseline, and then build the final pipeline from data, inference and ensemble strategies on top of the best models. Code: [`src/core`](src/core), one notebook per step in [`notebooks/`](notebooks).
 
 ## Method
 
-### Data
+### Data preparation
 
-Code: `notebooks/01_eda.ipynb`.
+Code: [01_eda_preprocessing.ipynb](notebooks/01_eda_preprocessing.ipynb).
 
 | | train | val | test |
 |---|---|---|---|
 | clips / frames | 56 / 24,201 | 7 / 2,846 | 48 / 3,811 |
 | objects (per frame) | 1,105,516 (45.7) | 114,132 (40.1) | — |
-| ignored annotations | 510,744 | 31,960 | — |
 | frame widths, px | 1344–2720 | 1344–3840 | 680–1920 |
-| mean brightness (0–255) | 116 | 108 | 100 |
 
-Data: No missing values, no zero-size, OOF boxes, duplicates, gaps in frame numbering, and the jpg count matches its annotations. 352 boxes have an aspect ratio above 6:1; they are objects cut by the frame border, so we keep them. 3 train frames have no objects.
+The annotations are clean: no zero-size or out-of-frame boxes, no duplicates, no gaps in frame numbering. Each finding sets one design choice:
 
-Classes: Car and person dominate train; bus is 0.9% of objects. mAP averages over classes, so bus counts as much as car. Val has a different mix because it is only 7 clips. We do not rebalance val. Bus appears in 25 of 63 clips and in only one val clip, so val AP for bus is unreliable.
-
-![Class distribution](images/eda_classes.png)
-
-![Objects per clip for each class](images/eda_class_per_clip.png)
-
-**Object sizes → input resolution and anchors.** By COCO area, 24% of objects are small, 64% medium, 12% large; person is 37% small, bus 57% large. The share of objects that shrink below 8 px (one cell of the finest stride) depends on the input size:
-
-| imgsz | 640 | 1024 | 1280 | 1536 |
-|---|---|---|---|---|
-| objects below 8 px at network input | 9.7% | 1.4% | 0.6% | 0.2% |
-
-We train at 1280: 640 loses about a tenth of the objects, and 1536 gains little for its cost. k-means on box shapes at 1280 gives clusters from 9×16 to 124×99 px with h/w between 0.5 and 1.9 (person ≈ 2.0, car ≈ 0.8). This sets the anchor sizes (16–256) and aspect ratios used for the anchor-based models.
+| Finding | Decision |
+|---|---|
+| 24% of objects are small; at 640 px, 9.7% shrink below 8 px (the finest stride), at 1280 px only 0.6%. | Train and predict at **1280 px**. |
+| k-means box shapes at 1280 px: 9×16 to 124×99 px, h/w 0.5–1.9. | Test anchors **16–256 px** instead of 32–512. |
+| Median 42 objects per frame, up to 180. | Up to **500 detections** per image, **300 queries** for RT-DETR. |
+| Same-track IoU between frames t and t+k: 0.90 (k=1), 0.59 (k=5), 0.35 (k=10). | Train on **every 5th frame**: 5× less compute, frames still differ. |
+| 20 ignored regions and "others" per frame, in 72% of frames. | Mask them in training, skip them in evaluation. |
+| 8 test clips are 680–960 px wide; test is darker (mean brightness 100 vs 116). | Measure the loss at 960 px in the final pipeline. |
 
 ![Object sizes](images/eda_object_sizes.png)
 
-**Scene density.** Frames hold 42 objects at the median and 180 at most; 7.5% have more than 100. The per-clip median ranges from 5 to 150. We keep up to 500 detections per image and need at least 300 queries for query-based models.
-
-**Test differs from train.** Eight test clips are 680–960 px wide, smaller than any train clip (≥1344 px). Upscaled to 1280, they are much blurrier: the median Laplacian variance at network input is 84–215 for test versus 497–848 for train. Test is also darker (mean brightness 100 vs 116; share of dark pixels 0.20 vs 0.11), and its darkest clip has a mean of 22. One test clip is a 2×2 collage of four videos. This motivates the downscale/JPEG and brightness augmentations that we test in the final pipeline.
-
-![Clip brightness](images/eda_brightness_per_clip.png)
-
-![Low-resolution test clips vs train at network input](images/eda_lowres_test.jpg)
-
-**Ignored regions and non-target classes.** Train has 498,952 ignored regions (crowds, parking lots, distant people) and 11,792 "others" (mixers, excavators, carts), about 20 per frame. Their median side is 94 px versus 46 px for objects. 72% of frames contain them, and in 2,536 frames they cover more than half of the image. 2.7% of target objects lie at least half inside one. Val has only 8 "others".
+Ultralytics reads the YOLO txt labels and torchvision the COCO json; on 60 val frames both agree exactly. Ignored regions and "others" are `iscrowd=1` in evaluation, so detections inside them do not count. In training they are filled with the frame's mean colour and objects at least 50% inside them are dropped, so crowds are not taught as background. Only the baseline trains without this masking.
 
 ![Ground truth with ignored regions](images/eda_gt_samples.jpg)
 
-![Ignored regions and "others"](images/eda_ignore_crops.jpg)
+### Validation strategy
 
-**Temporal redundancy → frame step.** The median IoU of the same track between frames t and t+k is 0.90 (k=1), 0.73 (k=3), 0.59 (k=5) and 0.35 (k=10). Neighbouring frames are near-duplicates, so we train on every 5th frame (4,868 frames). That saves 5× GPU time while consecutive training frames still differ noticeably.
+The official val split has 7 clips, and bus appears in only one of them, so a single holdout is a noisy benchmark. Several clips are also segments of one source flight. We pool train and val (63 clips, 55 flights, 27,047 frames) and split them into **4 folds with `GroupKFold` by flight** ([`assign_folds`](src/core/data.py)), so no flight is split across folds.
 
-![Same-track IoU vs frame step](images/eda_track_iou.png)
+Each fold model predicts every frame of its held-out fold, and models are compared by the **out-of-fold (OOF) mAP** over all labelled frames. We keep the last epoch, since picking the best one on the held-out fold would inflate OOF. k-means anchors are fitted on the training folds only. Metrics are COCO mAP, AP50, AP_small and per-class AP ([`coco_evaluate`](src/core/evaluate.py)) with up to 500 detections per image, plus batch-1 time per image on a T4.
 
-### Preprocessing and validation
+For the test set, the 4 fold models each predict and their boxes are merged with Weighted Boxes Fusion ([`fold_ensemble`](src/core/fusion.py)). This gain cannot be scored OOF, so it is measured on the public leaderboard.
 
-Ultralytics models read the provided YOLO labels. For torchvision, `vod.data.load_split` converts the COCO json to pixel `xyxy` boxes with labels 1–8 (0 is background) and keeps the ignored regions separately. On 60 val frames, the YOLO and COCO labels agree exactly: same box counts, no class mismatches, 0 px difference. The figures above and below confirm the boxes visually.
+### Model selection and tuning
 
-During training, ignored regions and others are filled with the frame's mean colour, and target boxes that are at least 50% covered are dropped, so the model is neither taught that crowds are background nor asked to find objects on a grey patch. 
+All detectors share one protocol ([`PROTOCOL`](src/core/__init__.py)): COCO-pretrained weights, long side 1280 px, every 5th training frame, horizontal flip, ignored-region masking, 8 epochs, batch 4, seed 42. Each family changes only its own parameters, one at a time, on fold 0; the best experiment gets the full 4-fold CV (its fold-0 score is slightly optimistic). Data and inference changes are kept for the final pipeline, so that their effect is measured separately from the model.
 
-Clip names show that several clips are segments of one source video. The provided val (7 clips, no source video shared with train) is the fixed hold-out for comparing detectors. For the final pipeline, we use 5-fold GroupKFold grouped by source video (11 sources and ~5,400 frames per fold), so no video is split across folds. Test clip names are anonymised, so overlap with train cannot be checked.
-
-Frames are resized so that the long side is 1280, and boxes are scaled with them. All detector comparisons share one protocol (`src/vod/protocol.py`): every 5th train frame, horizontal flip (p=0.5), masking of ignored regions, 8 epochs, seed 42. Extra augmentations are kept out of the comparison and tested only in the final pipeline:
-
-| augmentation | reason (from the data) |
-|---|---|
-| brightness/contrast jitter, p=0.5 | test is darker than train |
-| downscale ×0.35–0.75 + JPEG q30–75, p=0.3 | low-resolution, blurry test clips |
-| copy-paste of clean bicycle/van/truck/tricycle/bus objects, p=0.5 | rare classes; the object bank is built from **train only** (964 buses) |
-| repeat-factor sampling, t=0.5 | rare classes; weak here: bus frames rise only from 27% to 34%, because bus frames are common while bus objects are not |
-
-![YOLO labels vs. the torchvision training sample: ignored regions masked, rare object pasted](images/eda_preprocessing.jpg)
-
-Evaluation COCO mAP, AP50 and AP_small (faster-coco-eval) on every val frame, with up to 500 detections per image and ignored regions skipped.
-
-### Two-stage anchor-based
-
-_TODO_
-
-### One-stage anchor-based
-
-_TODO_
-
-### One-stage anchor-free
-
-_TODO_
-
-### Query-based
-
-_TODO_
-
-### Final pipeline
-
-_TODO_
-
-### How to run
-
-_TODO_
+| Family | Model | Experiments (one change each) | Notebook |
+|---|---|---|---|
+| Baseline | YOLO11s, Ultralytics defaults | — | [02](notebooks/02_baseline.ipynb) |
+| Two-stage anchor-based | Faster R-CNN v2, ResNet-50 FPN | RoI positive fraction 0.5; anchors 16–256; box loss ×2; step LR | [03](notebooks/03_faster_rcnn.ipynb) |
+| One-stage anchor-based | RetinaNet v2 | anchors 16–256; + IoU 0.4/0.3; focal γ=0 | [04](notebooks/04_retinanet.ipynb) |
+| Anchor-free | FCOS | centre radius 0.5 / 2.5; box loss ×2 | [05](notebooks/05_fcos.ipynb) |
+| Query-based | RT-DETR-L, 1.5 GPU-h per fold | lr 3·10⁻⁴; no denoising queries | [06](notebooks/06_rtdetr.ipynb) |
 
 ## Results
 
-### Cross-validated baseline
+### Baseline
 
-YOLO11s, Ultralytics defaults, 20 epochs, 1280 px, every 5th training frame, no ignore masking; last epoch per fold. Train + val pooled, 4 folds grouped by source flight, every frame of the held-out fold evaluated. Code: `notebooks/02_baseline.ipynb`; numbers: `reports/baseline/cv_baseline.json` (Tesla T4, ultralytics 8.4.207, torch 2.11.0, seed 42).
+YOLO11s, Ultralytics defaults (SGD, lr 0.01, mosaic), 20 epochs, 1280 px, every 5th frame, no ignore masking ([02_baseline.ipynb](notebooks/02_baseline.ipynb), [cv_baseline.json](reports/baseline/cv_baseline.json)).
 
 | | mAP | AP50 | AP75 | AP_small | AP_medium | AP_large | ms / image |
 |---|---|---|---|---|---|---|---|
@@ -119,49 +82,86 @@ YOLO11s, Ultralytics defaults, 20 epochs, 1280 px, every 5th training frame, no 
 | mean ± std | 0.200 ± 0.038 | 0.375 ± 0.054 | | 0.056 ± 0.014 | | | 35.6 |
 | **OOF (all 27,047 frames)** | **0.188** | **0.356** | **0.173** | **0.053** | **0.175** | **0.334** | |
 
-OOF AP per class: car 0.452, bus 0.281, person 0.201, tricycle 0.186, van 0.135, motor 0.123, bicycle 0.062, truck 0.060.
+OOF AP per class: car 0.452, bus 0.281, person 0.201, tricycle 0.186, van 0.135, motor 0.123, bicycle 0.062, truck 0.060. Speed includes preprocessing and NMS; training took 1.5 h per fold on a T4.
 
-Speed is Ultralytics' preprocess + inference + NMS per image, in chunks of 8, after one warm-up pass. Training took 1.5 h per fold on a T4 (Ultralytics defaults from `reports/baseline/fold*/args.yaml`: SGD-auto, lr0 0.01, AMP, mosaic with `close_mosaic` 10, scale 0.5, translate 0.1, horizontal flip 0.5).
+![Baseline training curves per fold](images/baseline_curves.png)
 
-![Baseline training curves per fold](reports/baseline/curves_baseline.png)
+The best epoch scores 0.011–0.026 mAP above the last one in every fold: this is how much `best.pt` would have inflated the OOF score. Fold mAP ranges from 0.156 to 0.247 depending on the held-out flights, so a single split could not separate most variants. Small objects are the main weakness (AP_small 0.053 vs AP_large 0.334); truck AP varies from 0.017 to 0.183 across folds because its few clips dominate.
 
-On the per-epoch curve (every 10th held-out frame), the best epoch scores 0.011–0.026 mAP above the last one in every fold. Keeping Ultralytics' `best.pt` would have chosen the epoch on the held-out fold and inflated the OOF score by about that much, so we keep the last epoch.
+### Two-stage anchor-based: Faster R-CNN
 
-The fold mAP ranges from 0.156 to 0.247 depending on which flights are held out, larger than most differences between the detector variants in the holdout table below, so single-split comparisons are not reliable. Small objects are the main weakness (AP_small 0.053 vs AP_large 0.334), and truck and bicycle score lowest: truck AP varies from 0.017 to 0.183 across folds, so its few clips dominate.
+SGD (momentum 0.9), lr 0.005, linear warmup and cosine decay, AMP. We measure what each stage contributes (RPN recall vs the second stage's detections) and split the failure cases into missed objects, wrong class, poor box, duplicates and background.
 
-### Fixed train/val holdout (earlier protocol)
+_Results pending._
 
-The table below uses the provided val split (7 clips) and is not comparable with the cross-validated numbers above.
+### One-stage anchor-based: RetinaNet
 
-| Model | mAP | AP50 | AP_small | ms / image | Public LB |
-|---|---|---|---|---|---|
-| YOLO11s baseline (Ultralytics defaults, 20 epochs, no ignore masking) | 0.204 | 0.397 | 0.101 | 26.8 | 0.233 |
-| Faster R-CNN, default (protocol) | 0.208 | 0.424 | 0.108 | 62.7 | 0.224 |
-| Faster R-CNN, RoI positive fraction 0.5 | 0.198 | 0.405 | 0.083 | 65.1 | — |
-| Faster R-CNN, RPN anchors 16–256 | 0.206 | 0.437 | 0.100 | 64.6 | — |
-| Faster R-CNN, box regression loss ×2 | 0.208 | 0.422 | 0.096 | 64.5 | — |
-| RetinaNet, default anchors (protocol) | 0.180 | 0.346 | 0.063 | 52.5 | — |
-| RetinaNet, anchors 16–256 | 0.164 | 0.359 | 0.072 | 55.1 | — |
-| RetinaNet, anchors 16–256 + IoU 0.4/0.3 | 0.162 | 0.348 | 0.076 | 53.6 | — |
-| RetinaNet, anchors 16–256 + IoU 0.4/0.3 + γ=1.5 | 0.164 | 0.351 | 0.069 | 53.6 | — |
-| RetinaNet, default anchors, γ=0 (no focal term) | 0.189 | 0.359 | 0.068 | 51.2 | 0.180 |
-| FCOS, default (centre sampling radius 1.5) | 0.178 | 0.357 | 0.079 | 47.8 | 0.233 |
-| FCOS, radius 0.5 | 0.173 | 0.360 | 0.076 | 48.0 | — |
-| FCOS, radius 2.5 | 0.168 | 0.334 | 0.072 | 47.8 | — |
-| FCOS, box regression loss ×2 | 0.177 | 0.355 | 0.076 | 48.2 | — |
-| RT-DETR-L, default (lr 1e-4, 10 epochs) | 0.222 | 0.429 | 0.100 | 154.7 | — |
-| RT-DETR-L, lr 3e-4 | 0.260 | 0.494 | 0.117 | 153.2 | — |
-| RT-DETR-L, GIoU loss weight 4 (default 2) | 0.110 | 0.210 | 0.052 | 154.8 | — |
+lr 0.0025. Without a proposal stage, the classifier scores every anchor, almost all of them background, and a small object may match no anchor at all; the focal loss and the anchor-matching statistics address these two issues. Anchors 16–256 come from the EDA box sizes.
 
-Inference variants (notebook 07), every 5th val frame, so the numbers are not comparable with the table above. `full` is one pass over the frame; `flip_tiles_nms65` adds the mirrored frame and four overlapping tiles, merged by class-wise NMS (IoU 0.65). The ensemble merges the two models' detections by NMS (IoU 0.5).
+_Results pending._
 
-| Model | mAP, `full` | mAP, best variant | mAP at 960 px, `full` | mAP at 960 px, best variant | clips improved (of 7) | ms / frame |
-|---|---|---|---|---|---|---|
-| RT-DETR-L, lr 3e-4 (`flip_tiles_nms65`) | 0.264 | 0.287 | 0.255 | 0.265 | 7 | 1011 |
-| YOLO, run `yolo_m` (`flip_tiles_nms65`) | 0.221 | 0.253 | 0.226 | 0.255 | 7 | 492 |
-| Ensemble of both | — | 0.289 | — | 0.276 | 5 | — |
+### Anchor-free: FCOS
+
+lr 0.0025. A location is positive if it lies inside a box and within a radius of its centre, on the FPN level that matches the box size; the radius sets how many locations a small object gets. Search range: radius 0.5, 1.5 (default), 2.5, and box loss ×2.
+
+_Results pending._
+
+### Query-based: RT-DETR
+
+AdamW, cosine schedule, 300 queries. The compute budget is the baseline's: 1.5 GPU-hours per fold, and Ultralytics fits the epochs into this time. Held-out mAP over training hours is plotted against the YOLO baseline with the same budget.
+
+_Results pending._
+
+### Comparison of all models
+
+OOF over all labelled frames for the selected experiment of each family; fold-0 mAP for the initial (default) configuration.
+
+| Model | Initial, fold-0 mAP | Selected experiment | OOF mAP | AP50 | AP_small | ms / image | Public LB |
+|---|---:|---|---:|---:|---:|---:|---:|
+| YOLO11s baseline | 0.195 | — | 0.188 | 0.356 | 0.053 | 35.6 | |
+| Faster R-CNN | | | | | | | |
+| RetinaNet | | | | | | | |
+| FCOS | | | | | | | |
+| RT-DETR-L | | | | | | | |
+
+### Final pipeline
+
+Three steps on fold 0, so that the effect of data and inference is separated from the effect of the model:
+
+1. **Data and model** ([07_0_yolo.ipynb](notebooks/07_0_yolo.ipynb)): YOLO11s on masked data (the data effect alone), then a P2 high-resolution head and a higher classification loss weight.
+2. **Inference** ([07_1_inference.ipynb](notebooks/07_1_inference.ipynb)): for the best run of each family, horizontal flip and 2×2 overlapping tiles merged by NMS or WBF, also at 960 px to mimic the low-resolution test clips.
+3. **Ensemble** ([07_2_ensemble.ipynb](notebooks/07_2_ensemble.ipynb)): cross-model WBF of the top models, and temporal rescoring: a box confirmed in neighbouring frames keeps its score, a box seen once loses part of it ([`rescore`](src/core/temporal.py)).
+
+_Results pending._
+
+| Submission | Internal mAP | Public LB |
+|---|---:|---:|
+| YOLO11s baseline, fold ensemble | 0.188 (OOF) | |
+
+## Final model and reproducibility
+
+### Final model
+
+_Pending: the selected ensemble, its fold-0 / OOF score and public LB score._
+
+### Reproducibility
+
+Every notebook runs on Kaggle (GPU T4, Internet on) with the competition data attached. Its first cells clone this repository and install Ultralytics and faster-coco-eval; the package versions of our runs are in [requirements.txt](requirements.txt), and the seed is 42 everywhere.
+
+1. Run the notebooks in order: 01 → 02 → 03, 04 → 05, 06, 07_0 → 07_1 → 07_2 (→ 08 for the visualizations).
+2. Attach the outputs of the earlier notebooks as Kaggle inputs; a rerun with its own previous output attached resumes from the saved folds.
+3. 07_2 writes the final `submission.csv`.
+
+Every run saves `cv_<name>.json` with its config, seed, package versions and GPU.
 
 ## Conclusion
 
 _TODO_
 
+## References
+
+- Data: Zhu et al., *Detection and Tracking Meet Drones Challenge* (VisDrone), arXiv:2001.06303.
+- Models: Ren et al., Faster R-CNN, arXiv:1506.01497; Lin et al., RetinaNet / focal loss, arXiv:1708.02002; Tian et al., FCOS, arXiv:1904.01355; Zhao et al., RT-DETR, arXiv:2304.08069; Ultralytics YOLO11 and RT-DETR (docs.ultralytics.com); torchvision detection models.
+- Evaluation: COCO detection metrics (cocodataset.org/#detection-eval); faster-coco-eval (github.com/MiXaiLL76/faster_coco_eval).
+- Ensembling: Solovyev et al., Weighted Boxes Fusion, arXiv:1910.13302.
+- Visualization: Selvaraju et al., Grad-CAM, arXiv:1610.02391; Zhu et al., Deformable DETR, arXiv:2010.04159; van der Maaten & Hinton, t-SNE (JMLR 2008).
