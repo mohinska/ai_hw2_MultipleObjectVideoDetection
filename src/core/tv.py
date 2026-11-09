@@ -20,7 +20,8 @@ from torchvision.models.detection.retinanet import RetinaNetClassificationHead
 from torchvision.ops import box_iou, sigmoid_focal_loss
 
 from . import CLASSES, SEED
-from .data import KAGGLE_INPUT, covered_share, every_nth, image_key
+from .data import covered_share, every_nth, image_key
+from .cv import existing
 from .evaluate import coco_evaluate
 
 
@@ -319,9 +320,7 @@ def plot_histories(names, fold, work):
     """Held-out mAP per epoch of several runs on one fold, from history_{name}_fold{k}.csv."""
     fig, ax = plt.subplots(figsize=(8, 4))
     for name in names:
-        hits = [Path(work) / f"history_{name}_fold{fold}.csv"]
-        hits += sorted(KAGGLE_INPUT.rglob(f"history_{name}_fold{fold}.csv")) if KAGGLE_INPUT.exists() else []
-        csv = next((h for h in hits if h.exists()), None)
+        csv = existing(f"history_{name}_fold{fold}.csv", work)
         if csv is not None:
             h = pd.read_csv(csv)
             ax.plot(h["epoch"], h["mAP"], marker="o", label=name)

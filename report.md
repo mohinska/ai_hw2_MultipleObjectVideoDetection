@@ -16,7 +16,7 @@ The data analysis showed four main difficulties:
 - **Class imbalance:** car and person are three quarters of the objects, bus is under 1%, while mAP weighs every class equally.
 - **Correlated frames and a shift to test:** neighbouring frames are near-duplicates, clips come from shared source flights, and the test set has darker and lower-resolution clips.
 
-We compare four detector families under one protocol and out-of-fold validation, next to a YOLO11s baseline, and then build the final pipeline from data, inference and ensemble strategies on top of the best models. Code: [`src/core`](src/core), one notebook per step in [`notebooks/`](notebooks).
+We compare four detector families under one protocol and out-of-fold validation, next to a YOLO11s baseline, and then build the final pipeline from data, inference and ensemble strategies on top of the best models. Code: [`src/core`](src/core/), one notebook per step in [`notebooks/`](notebooks/).
 
 ## Method
 
@@ -88,6 +88,8 @@ OOF AP per class: car 0.452, bus 0.281, person 0.201, tricycle 0.186, van 0.135,
 
 The best epoch scores 0.011–0.026 mAP above the last one in every fold: this is how much `best.pt` would have inflated the OOF score. Fold mAP ranges from 0.156 to 0.247 depending on the held-out flights, so a single split could not separate most variants. Small objects are the main weakness (AP_small 0.053 vs AP_large 0.334); truck AP varies from 0.017 to 0.183 across folds because its few clips dominate.
 
+On the public leaderboard, a single fold model scored 0.17; the WBF fusion of all 4 fold models scores **0.213**, since each fold model sees only 3/4 of the flights.
+
 ### Two-stage anchor-based: Faster R-CNN
 
 SGD (momentum 0.9), lr 0.005, linear warmup and cosine decay, AMP. We measure what each stage contributes (RPN recall vs the second stage's detections) and split the failure cases into missed objects, wrong class, poor box, duplicates and background.
@@ -118,7 +120,7 @@ OOF over all labelled frames for the selected experiment of each family; fold-0 
 
 | Model | Initial, fold-0 mAP | Selected experiment | OOF mAP | AP50 | AP_small | ms / image | Public LB |
 |---|---:|---|---:|---:|---:|---:|---:|
-| YOLO11s baseline | 0.195 | — | 0.188 | 0.356 | 0.053 | 35.6 | |
+| YOLO11s baseline | 0.195 | — | 0.188 | 0.356 | 0.053 | 35.6 | 0.213 |
 | Faster R-CNN | | | | | | | |
 | RetinaNet | | | | | | | |
 | FCOS | | | | | | | |
@@ -136,7 +138,7 @@ _Results pending._
 
 | Submission | Internal mAP | Public LB |
 |---|---:|---:|
-| YOLO11s baseline, fold ensemble | 0.188 (OOF) | |
+| YOLO11s baseline, fold ensemble (WBF of 4 fold models) | 0.188 (OOF) | 0.213 |
 
 ## Final model and reproducibility
 
