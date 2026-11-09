@@ -58,3 +58,9 @@ def coco_evaluate(dets, eval_frames, gt, per_class=False):
             p = precision[:, :, k]
             stats[f"AP_{coco_gt.cats[cat_id]['name']}"] = float(p[p > -1].mean()) if (p > -1).any() else float("nan")
     return stats
+
+
+def per_clip_map(dets, eval_frames, gt):
+    """mAP of every clip separately: shows whether a difference between two variants holds across scenes."""
+    clip = dets["key"].str.split("/").str[0]
+    return {v: coco_evaluate(dets[clip == v], g, gt)["mAP"] for v, g in eval_frames.groupby("video")}

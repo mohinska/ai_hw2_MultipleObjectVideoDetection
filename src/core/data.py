@@ -27,6 +27,18 @@ def image_key(path):
     return f"{p.parent.name}/{p.stem}"
 
 
+def load_coco(split_dir):
+    """annotations_coco.json of one split as (images, annotations) DataFrames; annotations get pixel x, y, w, h,
+    area, a 0-based `cls` and the clip, frame number and size of their frame."""
+    coco = json.loads((Path(split_dir) / "annotations_coco.json").read_text())
+    images, anns = pd.DataFrame(coco["images"]), pd.DataFrame(coco["annotations"])
+    anns[["x", "y", "w", "h"]] = pd.DataFrame(anns["bbox"].tolist(), index=anns.index)
+    anns["area"], anns["cls"] = anns["w"] * anns["h"], anns["category_id"] - 1
+    anns = anns.merge(images[["id", "video", "frame_id", "width", "height"]].rename(columns={"id": "image_id"}),
+                      on="image_id")
+    return images, anns
+
+
 def load_pool(data_root):
     """All labelled frames (train + val) and their COCO ground truth with globally unique image ids.
 

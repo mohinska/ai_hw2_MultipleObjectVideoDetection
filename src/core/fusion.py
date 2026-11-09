@@ -20,13 +20,17 @@ def iou_matrix(a, b):
     return inter / np.maximum(area(a)[:, None] + area(b)[None] - inter, 1e-9)
 
 
-def wbf(dets, n_models, iou=0.55):
+def wbf(dets, n_models, iou=0.55, weights=None):
     """Fuse detections (key, cls, score, x, y, w, h) of `n_models` models, per image and class.
 
     Boxes go in by descending score and join the cluster whose fused box they overlap by more than `iou`.
     A fused box is the score-weighted mean of its members; its score is the mean member score times
-    min(members, n_models) / n_models, so a box found by only one of four models keeps a quarter of its score.
+    min(members, n_models) / sum(weights), so a box found by only one of four models keeps a quarter of its score.
+    weights: one per model, used with a `src` column (model index) in `dets`; scores are multiplied by them first.
     """
+    weights = np.ones(n_models) if weights is None else np.asarray(weights, float)
+    if "src" in dets:
+        dets = dets.assign(score=dets["score"].to_numpy() * weights[dets["src"].to_numpy()])
     parts = []
     for (key, cls), g in dets.groupby(["key", "cls"], sort=False):
         xywh = g[["x", "y", "w", "h"]].to_numpy("float64")
@@ -50,7 +54,7 @@ def wbf(dets, n_models, iou=0.55):
             fused[j] = box_sum[j] / score_sum[j]
         parts.append(pd.DataFrame({
             "key": key, "cls": cls,
-            "score": score_sum[:k] / count[:k] * np.minimum(count[:k], n_models) / n_models,
+            "score": score_sum[:k] / count[:k] * np.minimum(count[:k], n_models) / weights.sum(),
             "x": fused[:k, 0], "y": fused[:k, 1], "w": fused[:k, 2] - fused[:k, 0], "h": fused[:k, 3] - fused[:k, 1]}))
     return pd.concat(parts, ignore_index=True)
 

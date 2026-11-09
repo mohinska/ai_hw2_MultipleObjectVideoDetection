@@ -116,3 +116,17 @@ def load_oof(name, folds, work):
     """Saved OOF detections of a run for the given held-out folds."""
     return pd.concat([pd.read_parquet(existing(f"oof_{name}_fold{k}.parquet", work)) for k in folds],
                      ignore_index=True)
+
+
+def best_per_family(prefixes, work, fold=0):
+    """{prefix: name of the run with the best mAP on held-out `fold`} among metrics_{name}_fold{fold}.json
+    found in `work` or /kaggle/input; families without a run are left out."""
+    files = list(Path(work).glob(f"metrics_*_fold{fold}.json"))
+    files += list(KAGGLE_INPUT.rglob(f"metrics_*_fold{fold}.json")) if KAGGLE_INPUT.exists() else []
+    scores = {f.name[len("metrics_"):-len(f"_fold{fold}.json")]: json.loads(f.read_text())["mAP"] for f in files}
+    best = {}
+    for prefix in prefixes:
+        family = {n: m for n, m in scores.items() if n.startswith(prefix)}
+        if family:
+            best[prefix] = max(family, key=family.get)
+    return best
