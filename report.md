@@ -11,7 +11,7 @@ We detect 8 object classes (person, bicycle, car, van, truck, tricycle, bus, mot
 
 The data analysis showed four main difficulties:
 
-- **Small objects:** 24% of boxes are below 32² px, so the input resolution decides how many objects are visible at all.
+- **Small objects:** 24% of objects are smaller than 32×32 px (COCO "small"), so the input resolution decides how many objects are visible at all.
 - **Dense scenes:** 42 objects per frame at the median and up to 180, so duplicate suppression and the detection limit matter.
 - **Class imbalance:** car and person are three quarters of the objects, bus is under 1%, while mAP weighs every class equally.
 - **Correlated frames and a shift to test:** neighbouring frames are near-duplicates, clips come from shared source flights, and the test set has darker and lower-resolution clips.

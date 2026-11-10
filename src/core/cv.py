@@ -57,6 +57,9 @@ def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS, folds=N
     here or in /kaggle/input) are reused, so a run cut off by the Kaggle time limit can be resumed.
     Writes cv_{name}.json with cfg, environment and all metrics.
     """
+    import torch
+    if KAGGLE_INPUT.exists() and not torch.cuda.is_available():
+        raise RuntimeError("No GPU: set Accelerator to GPU T4 in the notebook settings")
     work = Path(work)
     frames = frames.assign(fold=frames["video"].map(assign_folds(frames, n_folds)))
     folds = list(range(n_folds)) if folds is None else list(folds)
