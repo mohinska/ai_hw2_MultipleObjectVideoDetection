@@ -65,7 +65,7 @@ All detectors share one protocol ([`PROTOCOL`](src/core/__init__.py)): COCO-pret
 | Two-stage anchor-based | Faster R-CNN v2, ResNet-50 FPN | RoI positive fraction 0.5; anchors 16–256; box loss ×2; step LR | [03](notebooks/03_faster_rcnn.ipynb) |
 | One-stage anchor-based | RetinaNet v2 | anchors 16–256; + IoU 0.4/0.3; focal γ=0 | [04](notebooks/04_retinanet.ipynb) |
 | Anchor-free | FCOS | centre radius 0.5 / 2.5; box loss ×2 | [05](notebooks/05_fcos.ipynb) |
-| Query-based | RT-DETR-L | lr 3·10⁻⁴; GIoU loss weight 4 (default 2) | [06](notebooks/06_rtdetr.ipynb) |
+| Query-based | RT-DETR-L, 1.5 GPU-h per fold | lr 3·10⁻⁴; no denoising queries | [06](notebooks/06_rtdetr.ipynb) |
 
 ## Results
 
@@ -157,17 +157,28 @@ _Results pending._
 
 ### Query-based: RT-DETR
 
-AdamW, cosine schedule, 300 queries, 1280 px, 10 epochs (about 2.7 GPU-hours per run on a T4) ([06_rtdetr.ipynb](notebooks/06_rtdetr.ipynb), [reports/rtdetr](reports/rtdetr/)). Unlike the other families, RT-DETR was trained on the train split and evaluated on the **official val split** (7 clips), so its numbers are not directly comparable with the fold-0 / OOF scores above.
+AdamW, cosine schedule, 300 queries, max 300 detections. The compute budget is the baseline's: 1.5 GPU-hours per fold, and Ultralytics fits the epochs into this time, which gives about 6 epochs ([06_rtdetr.ipynb](notebooks/06_rtdetr.ipynb), [reports/rtdetr](reports/rtdetr/)).
 
-| Experiment (official val) | mAP | AP50 | AP75 | AP_small | AP_large | ms / image |
+| Experiment (fold 0) | mAP | AP50 | AP75 | AP_small | AP_large | AR500 |
 |---|---:|---:|---:|---:|---:|---:|
-| default (lr 1·10⁻⁴) | 0.222 | 0.429 | 0.205 | 0.100 | 0.382 | 154.7 |
-| **lr 3·10⁻⁴** | **0.260** | **0.494** | **0.239** | **0.117** | **0.444** | 153.2 |
-| GIoU loss weight 4 | 0.110 | 0.210 | 0.102 | 0.052 | 0.224 | 154.8 |
+| default (lr 1·10⁻⁴) | 0.096 | 0.177 | 0.093 | 0.020 | 0.129 | 0.396 |
+| lr 3·10⁻⁴ | 0.173 | 0.317 | 0.170 | 0.024 | 0.249 | 0.434 |
+| **no denoising queries** | **0.175** | 0.337 | 0.164 | 0.033 | 0.264 | 0.428 |
 
-![RT-DETR val mAP per epoch](images/rtdetr_curves.png)
+![RT-DETR held-out mAP against training hours, fold 0](images/rtdetr_budget_curves.png)
 
-The default learning rate is still climbing after 10 epochs, while lr 3·10⁻⁴ reaches 0.22 by epoch 4 and levels off: in a short schedule the transformer is limited by convergence speed. A higher GIoU weight halves the mAP, so the box loss pushed localisation at the cost of classification (its val classification loss is the highest). The best run has the highest AP_small of all families (0.117 vs 0.04–0.06 for the CNNs) and the best per-class AP on bicycle, van and truck. It is also 4× slower than YOLO11s. Public LB (single model, one full-frame pass): **0.307**.
+Within 1.5 hours the default run stalls below 0.10, while both changes reach about 0.17 and are still rising at the end of the budget. The learning curves show that the transformer is limited by convergence speed, not by capacity. A higher learning rate speeds it up. Without denoising queries the first 0.5 h are almost flat (the matching is unstable), but after that the curve rises fastest. The two variants are within 0.002 mAP on fold 0, and no denoising is selected for the full CV.
+
+| no denoising | mAP | AP50 | AP75 | AP_small | AP_medium | AP_large | ms / image |
+|---|---|---|---|---|---|---|---|
+| fold 0 | 0.175 | 0.337 | 0.164 | 0.033 | 0.140 | 0.264 | 197.6 |
+| fold 1 | 0.169 | 0.321 | 0.161 | 0.043 | 0.171 | 0.304 | 197.5 |
+| fold 2 | 0.000 | 0.004 | 0.000 | 0.000 | 0.001 | 0.002 | 197.4 |
+| fold 3 | 0.161 | 0.293 | 0.162 | 0.052 | 0.136 | 0.299 | 191.9 |
+| mean, folds 0, 1, 3 | 0.168 | 0.317 | | 0.043 | | | 195.7 |
+| OOF (all 27,047 frames) | 0.112 | 0.217 | 0.106 | 0.027 | 0.103 | 0.183 | |
+
+**Fold 2 collapsed:** its model finds almost nothing (AR500 0.011), so its training failed rather than generalising badly; all other models score 0.155–0.185 on this fold. Without denoising there is nothing to stabilise the early matching, so a fold where it never recovers within the budget is plausible. The OOF score therefore underestimates the model, and fold 2 has to be retrained before the OOF can be compared. On the three working folds RT-DETR averages 0.168, below the YOLO baseline (0.215 on the same folds) at 5.5× its inference time; at this budget the query-based detector does not pay off. OOF AP per class: car 0.297, bus 0.164, person 0.131, van 0.095, tricycle 0.080, motor 0.052, truck 0.041, bicycle 0.039.
 
 ### Comparison of all models
 
@@ -179,9 +190,9 @@ OOF over all labelled frames for the selected experiment of each family; fold-0 
 | Faster R-CNN | 0.225 | step LR | 0.212 | 0.416 | 0.055 | 66.3 | 0.243 |
 | RetinaNet | 0.215 | focal γ = 0 | 0.187 | 0.357 | 0.041 | 48.5 | 0.188 |
 | FCOS | | | | | | | |
-| RT-DETR-L | 0.222\* | lr 3·10⁻⁴ | 0.260\* | 0.494\* | 0.117\* | 153.2 | 0.307 |
+| RT-DETR-L | 0.096 | no denoising | 0.112\* | 0.217\* | 0.027\* | 196.1 | |
 
-\* RT-DETR: official val split instead of fold 0 / OOF.
+\* RT-DETR: fold 2 collapsed during training (mAP 0.000); mean of the other three folds 0.168.
 
 ### Final pipeline
 
@@ -199,7 +210,6 @@ _Results pending._
 | YOLO11s baseline, fold ensemble (WBF of 4 fold models) | 0.188 (OOF) | 0.213 |
 | Faster R-CNN step LR, fold ensemble | 0.212 (OOF) | 0.243 |
 | RetinaNet γ = 0, fold ensemble | 0.187 (OOF) | 0.188 |
-| RT-DETR-L lr 3·10⁻⁴, one full-frame pass | 0.260 (val) | 0.307 |
 | Inference + temporal rescoring (07.1) | | 0.314 |
 | Cross-model ensemble (07.2) | | 0.322 |
 
