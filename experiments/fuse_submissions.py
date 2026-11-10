@@ -2,7 +2,7 @@
 
 Usage (from the repo root):
     uv run --with pandas --with numpy --with scikit-learn python experiments/fuse_submissions.py \
-        --subs a.csv b.csv c.csv --weights 2 1 1 --iou 0.6 --test test_images.csv --out fused.csv [--rank]
+        --subs a.csv b.csv c.csv --weights 2 1 1 --iou 0.6 --test test_images.csv --out fused.csv [--rank] [--fuse nms|wbf]
 
 --rank replaces each submission's scores by their percentile within that file before fusion, so that models with
 different score scales (RT-DETR vs YOLO) count equally. Each output row keeps the top 500 boxes per image.
@@ -17,7 +17,24 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from core import MAX_DETS  # noqa: E402
-from core.fusion import wbf  # noqa: E402
+from core.fusion import iou_matrix, wbf  # noqa: E402
+
+
+def nms(dets, iou, weights):
+    """Class-wise greedy NMS over all submissions (scores multiplied by the submission weights first).
+    Unlike WBF, a box found by one submission keeps its score; on val, NMS beat WBF when merging tiles."""
+    dets = dets.assign(score=dets["score"].to_numpy() * np.asarray(weights, float)[dets["src"].to_numpy()])
+    keep = []
+    for _, g in dets.groupby(["key", "cls"], sort=False):
+        g = g.sort_values("score", ascending=False)
+        xywh = g[["x", "y", "w", "h"]].to_numpy("float64")
+        box = np.column_stack([xywh[:, :2], xywh[:, :2] + xywh[:, 2:]])
+        alive = np.ones(len(g), bool)
+        for i in range(len(g)):
+            if alive[i]:
+                alive[i + 1:] &= iou_matrix(box[i][None], box[i + 1:])[0] <= iou
+        keep.append(g[alive])
+    return pd.concat(keep, ignore_index=True)
 
 
 def read_submission(path):
@@ -59,6 +76,7 @@ def main():
     ap.add_argument("--weights", nargs="+", type=float)
     ap.add_argument("--iou", type=float, default=0.6)
     ap.add_argument("--rank", action="store_true")
+    ap.add_argument("--fuse", choices=["wbf", "nms"], default="nms")
     ap.add_argument("--test")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -73,7 +91,9 @@ def main():
         print(f"{path}: {len(dets)} boxes, {len(dets) / len(image_ids):.0f} per image, "
               f"median score {dets['score'].median():.3f}")
         parts.append(dets.assign(src=i))
-    fused = wbf(pd.concat(parts, ignore_index=True), len(a.subs), a.iou, a.weights)
+    weights = a.weights or [1.0] * len(a.subs)
+    fused = (nms if a.fuse == "nms" else lambda d, i, w: wbf(d, len(a.subs), i, w))(
+        pd.concat(parts, ignore_index=True), a.iou, weights)
     write(fused, ids, a.out)
     print(f"{a.out}: {len(fused)} fused boxes before the 500-per-image cap")
     if a.test:
