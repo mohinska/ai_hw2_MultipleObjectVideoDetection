@@ -49,12 +49,13 @@ def existing(name, work):
     return local
 
 
-def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS, folds=None):
+def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS, folds=None, retrain=()):
     """Train on all folds but one, predict every frame of the held-out fold, for each fold.
 
     `folds` limits the run to some held-out folds (e.g. [0] for a hyperparameter sweep); the "oof" metrics
     then cover only those folds' frames. Finished folds ({name}_fold{k}.pt + OOF parquet + metrics json,
-    here or in /kaggle/input) are reused, so a run cut off by the Kaggle time limit can be resumed.
+    here or in /kaggle/input) are reused, so a run cut off by the Kaggle time limit can be resumed;
+    folds listed in `retrain` ignore saved files and are trained again (e.g. a fold whose training failed).
     Writes cv_{name}.json with cfg, environment and all metrics.
     """
     import torch
@@ -71,9 +72,12 @@ def run_cv(frames, gt, cfg, train_fn, predict_fn, work, n_folds=N_FOLDS, folds=N
         print(f"fold {k}: {len(train)} train frames, {len(held_out)} held-out frames "
               f"({held_out['video'].nunique()} clips)")
 
-        weights = existing(f"{tag}.pt", work) or train_fn(train, held_out, tag)
+        if k in retrain:
+            weights = train_fn(train, held_out, tag)
+        else:
+            weights = existing(f"{tag}.pt", work) or train_fn(train, held_out, tag)
         oof_file, metrics_file = existing(f"oof_{tag}.parquet", work), existing(f"metrics_{tag}.json", work)
-        if oof_file and metrics_file:
+        if k not in retrain and oof_file and metrics_file:
             oof, m = pd.read_parquet(oof_file), json.loads(metrics_file.read_text())
         else:
             oof, ms = predict_fn(weights, held_out["path"].tolist())
