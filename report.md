@@ -91,29 +91,11 @@ Public LB of the 4-fold WBF ensemble: **0.243** (baseline 0.213). Sweep table, p
 
 ### One-stage anchor-based: RetinaNet
 
-lr 0.0025. Without a proposal stage, the classifier scores every anchor, almost all of them background, and a small object may match no anchor at all; the focal loss and the anchor-matching statistics address these two issues. Anchors 16–256 come from the EDA box sizes ([04_retinanet.ipynb](notebooks/04_retinanet.ipynb), [reports/retinanet](reports/retinanet/)).
+lr 0.0025 ([04_retinanet.ipynb](notebooks/04_retinanet.ipynb), [reports/retinanet](reports/retinanet/)). With the default 32–512 anchors, no anchor matches any object under 16 px and 42% of 16–32 px objects; anchors 16–256 (from the EDA box sizes) cut this to 47% and 1.4%, but double the negatives per positive anchor (286 → 580).
 
-| Experiment (fold 0) | mAP | AP50 | AP75 | AP_small | AP_large |
-|---|---:|---:|---:|---:|---:|
-| default | 0.215 | 0.415 | 0.200 | 0.025 | 0.397 |
-| anchors 16–256 | 0.199 | 0.418 | 0.165 | 0.042 | 0.328 |
-| + IoU 0.4 / 0.3 | 0.192 | 0.408 | 0.155 | 0.041 | 0.320 |
-| **focal γ = 0** | **0.221** | 0.419 | 0.208 | 0.025 | 0.400 |
+On fold 0 smaller anchors raise AP_small from 0.025 to 0.042 but lose 0.07 AP_large, so mAP falls (0.215 → 0.199); lower IoU thresholds make it worse. Removing the focal term (γ = 0) is slightly better than the default (0.221) and gets the full CV. OOF: **mAP 0.188**, AP50 0.357, AP_small 0.041; fold mean 0.200 ± 0.031; 48.5 ms per image. That equals the baseline and is 0.024 below the tuned Faster R-CNN (0.235 vs 0.221 on fold 0).
 
-Smaller anchors raise AP_small from 0.025 to 0.042 but cost 0.07 AP_large and 0.035 AP75, so the overall mAP falls; lower IoU thresholds make it worse. Removing the focal term (γ = 0) is slightly better than the default on fold 0. With the classification prior and 8 epochs, plain cross-entropy is enough here.
-
-| focal γ = 0 | mAP | AP50 | AP75 | AP_small | AP_medium | AP_large | ms / image |
-|---|---|---|---|---|---|---|---|
-| fold 0 | 0.221 | 0.419 | 0.208 | 0.025 | 0.174 | 0.400 | 48.8 |
-| fold 1 | 0.221 | 0.407 | 0.211 | 0.041 | 0.210 | 0.413 | 48.5 |
-| fold 2 | 0.155 | 0.309 | 0.139 | 0.045 | 0.153 | 0.363 | 48.6 |
-| fold 3 | 0.202 | 0.366 | 0.200 | 0.054 | 0.180 | 0.388 | 47.9 |
-| mean ± std | 0.200 ± 0.031 | 0.375 ± 0.050 | | 0.041 ± 0.012 | | | 48.5 |
-| **OOF** | **0.187** | **0.357** | **0.176** | **0.041** | **0.164** | **0.376** | |
-
-OOF AP per class: car 0.405, bus 0.328, person 0.184, tricycle 0.183, van 0.155, truck 0.096, motor 0.091, bicycle 0.057. RetinaNet matches the baseline OOF (0.187 vs 0.188) and is 0.025 below Faster R-CNN, with the weakest AP_small of the three: without proposals and box refinement, small objects suffer most. Public LB: **0.188**.
-
-![RetinaNet held-out mAP per epoch, fold 0](images/retinanet_curves.png)
+**Without a proposal stage**, localisation is weaker (AP75 0.176 vs 0.190) and small objects suffer most (AP_small 0.041 vs 0.055), as expected. The focal loss turned out unnecessary: the prior bias of the classifier already handles the imbalance. Fixing anchors alone does not close the gap; learned assignment or an anchor-free head (FCOS) is the cleaner fix. Public LB: **0.188**. Anchor, sweep and per-class tables: [04_retinanet.ipynb](notebooks/04_retinanet.ipynb).
 
 ### Anchor-free: FCOS
 
