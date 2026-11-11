@@ -99,9 +99,11 @@ On fold 0 smaller anchors raise AP_small from 0.025 to 0.042 but lose 0.07 AP_la
 
 ### Anchor-free: FCOS
 
-lr 0.0025. A location is positive if it lies inside a box and within a radius of its centre, on the FPN level that matches the box size; the radius sets how many locations a small object gets. Search range: radius 0.5, 1.5 (default), 2.5, and box loss ×2.
+lr 0.0025 ([05_fcos.ipynb](notebooks/05_fcos.ipynb)). Without anchors, a feature-map location is positive for an object if it lies inside the box and within `radius × stride` of its centre, on the FPN level that matches the box size; a location inside several boxes takes the smallest. The radius sets how many positives an object gets: at radius 1.5 a 16–32 px object gets a median of 6, at 2.5 it gets 9 and a large object 25. Objects under 16 px are the exception: 4.7% of them get no positive at any radius, since a box smaller than the stride may contain no location at all. In dense scenes a wider radius makes the sampling regions of neighbours overlap.
 
-_Results pending._
+Search range: radius 0.5, 1.5 (default), 2.5, and box loss ×2. No change beats the default (0.205 on fold 0): radius 0.5 gives too few positives (AP75 −0.025), radius 2.5 loses 0.021 AP_medium to ambiguous positives in crowds, and box loss ×2 has no effect. So the initial and tuned FCOS are the same model. OOF: **mAP 0.179**, AP50 0.355, AP_small 0.050; fold mean 0.191 ± 0.029; 49 ms per image.
+
+Against the tuned anchor-based detectors, by object size (OOF): FCOS beats RetinaNet on small objects (AP_small 0.050 vs 0.041), as the assignment suggests, but loses on medium (0.158 vs 0.164) and large ones (0.341 vs 0.376), and is the weakest overall. Faster R-CNN leads in every size bin (0.055 / 0.193 / 0.401). Assignment and sweep tables: [05_fcos.ipynb](notebooks/05_fcos.ipynb).
 
 ### Query-based: RT-DETR
 
@@ -118,7 +120,7 @@ OOF over all labelled frames for the selected experiment of each family; fold-0 
 | YOLO11s baseline | 0.195 | — | 0.188 | 0.356 | 0.053 | 35.6 | 0.213 |
 | Faster R-CNN | 0.225 | step LR | 0.212 | 0.416 | 0.055 | 66.3 | 0.243 |
 | RetinaNet | 0.215 | focal γ = 0 | 0.187 | 0.357 | 0.041 | 48.5 | 0.188 |
-| FCOS | | | | | | | |
+| FCOS | 0.205 | default (radius 1.5) | 0.179 | 0.355 | 0.050 | 49.2 | |
 | RT-DETR-L | | | | | | | |
 
 ### Final pipeline
