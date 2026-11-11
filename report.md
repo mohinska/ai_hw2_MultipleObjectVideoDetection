@@ -77,36 +77,17 @@ OOF over all 27,047 frames: **mAP 0.188**, AP50 0.356, AP_small 0.053; fold mean
 
 ### Two-stage anchor-based: Faster R-CNN
 
-SGD (momentum 0.9), lr 0.005, linear warmup and cosine decay, AMP. We measure what each stage contributes (RPN recall vs the second stage's detections) and split the failure cases into missed objects, wrong class, poor box, duplicates and background ([03_faster_rcnn.ipynb](notebooks/03_faster_rcnn.ipynb), [reports/faster_rcnn](reports/faster_rcnn/)).
+SGD (momentum 0.9), lr 0.005, linear warmup and cosine decay, AMP ([03_faster_rcnn.ipynb](notebooks/03_faster_rcnn.ipynb), [reports/faster_rcnn](reports/faster_rcnn/)).
 
-| Experiment (fold 0) | mAP | AP50 | AP75 | AP_small | AP_large |
-|---|---:|---:|---:|---:|---:|
-| default | 0.225 | 0.435 | 0.202 | 0.039 | 0.390 |
-| RoI positive fraction 0.5 | 0.228 | 0.441 | 0.209 | 0.039 | 0.395 |
-| anchors 16–256 | 0.228 | 0.453 | 0.200 | 0.042 | 0.385 |
-| box loss ×2 | 0.227 | 0.436 | 0.208 | 0.036 | 0.400 |
-| **step LR** | **0.235** | 0.447 | 0.217 | 0.042 | 0.394 |
+All four experiments stay within 0.010 mAP of the default (0.225 on fold 0); the step LR schedule is the best (0.235) and gets the full CV. OOF: **mAP 0.212**, AP50 0.416, AP_small 0.055; fold mean 0.224 ± 0.027; 66.3 ms per image. That is 0.024 above the baseline, mostly from AP50 and large objects, at 1.9× its inference time; bus, truck and van gain the most.
 
-All four changes stay within 0.010 mAP of the default, which is smaller than the spread between folds. Step LR is the best on fold 0 and gets the full CV:
+**What each stage contributes.** The RPN sets the ceiling on recall: with 1,000 proposals it covers only 39% of objects under 16 px and 74% of 16–32 px ones. The RoI head classifies and filters the class-agnostic proposals, keeping 92% of the covered objects, but does not tighten the boxes of tiny objects. 300 proposals are enough (+0.003 mAP from 300 to 2,000).
 
-| step LR | mAP | AP50 | AP75 | AP_small | AP_medium | AP_large | ms / image |
-|---|---|---|---|---|---|---|---|
-| fold 0 | 0.235 | 0.447 | 0.217 | 0.042 | 0.209 | 0.394 | 66.3 |
-| fold 1 | 0.247 | 0.466 | 0.230 | 0.058 | 0.238 | 0.405 | 64.9 |
-| fold 2 | 0.185 | 0.387 | 0.150 | 0.063 | 0.188 | 0.407 | 68.4 |
-| fold 3 | 0.229 | 0.432 | 0.218 | 0.067 | 0.208 | 0.426 | 65.7 |
-| mean ± std | 0.224 ± 0.027 | 0.433 ± 0.034 | | 0.058 ± 0.011 | | | 66.3 |
-| **OOF** | **0.212** | **0.416** | **0.190** | **0.055** | **0.193** | **0.401** | |
-
-OOF AP per class: car 0.423, bus 0.356, person 0.212, tricycle 0.205, van 0.181, motor 0.131, truck 0.108, bicycle 0.079. Compared with the baseline, the OOF mAP is 0.024 higher, mostly from AP50 (+0.060) and large objects (+0.067); AP_small is about the same. Truck and bus gain the most. The model is 1.9× slower than YOLO11s. Public LB of the 4-fold WBF ensemble: **0.243** (baseline 0.213).
-
-![Faster R-CNN held-out mAP per epoch, fold 0](images/frcnn_curves.png)
-
-Held-out mAP peaks at epoch 2 and then oscillates within ±0.01, so 8 epochs at this learning rate mostly do not improve the model further.
+**Failure cases.** Misses are mostly tiny distant objects and densely parked cars that get no proposal; class errors are between tricycles, motors and bicycles, which look alike from above; background false positives are parked cars that are probably unlabelled.
 
 ![Faster R-CNN failure cases](images/frcnn_failure_cases.png)
 
-The three frames with the most missed objects, wrong-class objects and background false positives. Misses are mostly tiny, distant objects and tightly packed parked cars; class errors are among the small two-wheelers and tricycles at a crowded crossing; false positives are parked cars far from the camera, which are probably unlabelled.
+Public LB of the 4-fold WBF ensemble: **0.243** (baseline 0.213). Sweep table, per-class AP, stage and proposal tables: [03_faster_rcnn.ipynb](notebooks/03_faster_rcnn.ipynb).
 
 ### One-stage anchor-based: RetinaNet
 
