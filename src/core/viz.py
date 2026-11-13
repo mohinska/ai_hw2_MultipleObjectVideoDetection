@@ -19,6 +19,7 @@ from .cv import existing
 from .data import KAGGLE_INPUT
 
 FPN_LEVELS = {"0": "P2 (stride 4)", "1": "P3 (stride 8)", "2": "P4 (stride 16)", "3": "P5 (stride 32)"}
+REPORTS = Path(__file__).resolve().parents[2] / "reports"  # curves saved in the repo
 BACKBONE_STAGES = {"0": "C2 (stride 4)", "1": "C3 (stride 8)", "2": "C4 (stride 16)", "3": "C5 (stride 32)"}
 
 
@@ -195,12 +196,14 @@ def attention_stats(probe, queries):
 # ---------------------------------------------------------------- Weights & Biases
 
 def _curves(name, k, work):
-    """Per-epoch curve of fold k: torchvision history csv or Ultralytics results.csv; columns epoch, mAP, losses."""
-    f = existing(f"history_{name}_fold{k}.csv", work)
+    """Per-epoch curve of fold k: torchvision history csv or Ultralytics results.csv (work, Kaggle input or the
+    repo's reports/); columns epoch, mAP, losses."""
+    f = existing(f"history_{name}_fold{k}.csv", work) or next(REPORTS.rglob(f"history_{name}_fold{k}.csv"), None)
     if f is not None:
         return pd.read_csv(f)
     hits = [Path(work) / "runs" / f"{name}_fold{k}" / "results.csv"]
     hits += sorted(KAGGLE_INPUT.rglob(f"{name}_fold{k}/results.csv")) if KAGGLE_INPUT.exists() else []
+    hits += sorted(REPORTS.rglob(f"{name}_fold{k}/results.csv"))
     f = next((h for h in hits if h.exists()), None)
     if f is None:
         return None
