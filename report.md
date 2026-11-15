@@ -11,7 +11,7 @@ We detect 8 object classes (person, bicycle, car, van, truck, tricycle, bus, mot
 
 The data analysis showed four main difficulties:
 
-- **Small objects:** 24% of boxes are below 32² px, so the input resolution decides how many objects are visible at all.
+- **Small objects:** 24% of objects are smaller than 32×32 px (COCO "small"), so the input resolution decides how many objects are visible at all.
 - **Dense scenes:** 42 objects per frame at the median and up to 180, so duplicate suppression and the detection limit matter.
 - **Class imbalance:** car and person are three quarters of the objects, bus is under 1%, while mAP weighs every class equally.
 - **Correlated frames and a shift to test:** neighbouring frames are near-duplicates, clips come from shared source flights, and the test set has darker and lower-resolution clips.
@@ -73,46 +73,43 @@ All detectors share one protocol ([`PROTOCOL`](src/core/__init__.py)): COCO-pret
 
 YOLO11s, Ultralytics defaults (SGD, lr 0.01, mosaic), 20 epochs, 1280 px, every 5th frame, no ignore masking ([02_baseline.ipynb](notebooks/02_baseline.ipynb), [cv_baseline.json](reports/baseline/cv_baseline.json)).
 
-| | mAP | AP50 | AP75 | AP_small | AP_medium | AP_large | ms / image |
-|---|---|---|---|---|---|---|---|
-| fold 0 | 0.195 | 0.367 | 0.179 | 0.039 | 0.148 | 0.337 | 35.6 |
-| fold 1 | 0.247 | 0.450 | 0.236 | 0.067 | 0.254 | 0.429 | 35.5 |
-| fold 2 | 0.156 | 0.321 | 0.131 | 0.050 | 0.167 | 0.313 | 35.7 |
-| fold 3 | 0.203 | 0.363 | 0.199 | 0.069 | 0.178 | 0.362 | 35.8 |
-| mean ± std | 0.200 ± 0.038 | 0.375 ± 0.054 | | 0.056 ± 0.014 | | | 35.6 |
-| **OOF (all 27,047 frames)** | **0.188** | **0.356** | **0.173** | **0.053** | **0.175** | **0.334** | |
-
-OOF AP per class: car 0.452, bus 0.281, person 0.201, tricycle 0.186, van 0.135, motor 0.123, bicycle 0.062, truck 0.060. Speed includes preprocessing and NMS; training took 1.5 h per fold on a T4.
-
-![Baseline training curves per fold](images/baseline_curves.png)
-
-The best epoch scores 0.011–0.026 mAP above the last one in every fold: this is how much `best.pt` would have inflated the OOF score. Fold mAP ranges from 0.156 to 0.247 depending on the held-out flights, so a single split could not separate most variants. Small objects are the main weakness (AP_small 0.053 vs AP_large 0.334); truck AP varies from 0.017 to 0.183 across folds because its few clips dominate.
-
-On the public leaderboard, a single fold model scored 0.17; the WBF fusion of all 4 fold models scores **0.213**, since each fold model sees only 3/4 of the flights.
+OOF over all 27,047 frames: **mAP 0.188**, AP50 0.356, AP_small 0.053; fold mean 0.200 ± 0.038; 35.6 ms per image on a T4. Fold mAP ranges from 0.156 to 0.247 with the held-out flights, so a single split could not separate most variants. Small objects are the main weakness (AP_small 0.053 vs AP_large 0.334). Public LB: 0.173 for a single fold model, **0.213** for the WBF ensemble of the 4 fold models. Per-fold and per-class results, training curves: [02_baseline.ipynb](notebooks/02_baseline.ipynb).
 
 ### Two-stage anchor-based: Faster R-CNN
 
-SGD (momentum 0.9), lr 0.005, linear warmup and cosine decay, AMP. We measure what each stage contributes (RPN recall vs the second stage's detections) and split the failure cases into missed objects, wrong class, poor box, duplicates and background.
+SGD (momentum 0.9), lr 0.005, linear warmup and cosine decay, AMP ([03_faster_rcnn.ipynb](notebooks/03_faster_rcnn.ipynb), [reports/faster_rcnn](reports/faster_rcnn/)).
 
-_Results pending._
+All four experiments stay within 0.010 mAP of the default (0.225 on fold 0); the step LR schedule is the best (0.235) and gets the full CV. OOF: **mAP 0.212**, AP50 0.416, AP_small 0.055; fold mean 0.224 ± 0.027; 66.3 ms per image. That is 0.024 above the baseline, mostly from AP50 and large objects, at 1.9× its inference time; bus, truck and van gain the most.
+
+**What each stage contributes.** The RPN sets the ceiling on recall: with 1,000 proposals it covers only 39% of objects under 16 px and 74% of 16–32 px ones. The RoI head classifies and filters the class-agnostic proposals, keeping 92% of the covered objects, but does not tighten the boxes of tiny objects. 300 proposals are enough (+0.003 mAP from 300 to 2,000).
+
+**Failure cases.** Misses are mostly tiny distant objects and densely parked cars that get no proposal; class errors are between tricycles, motors and bicycles, which look alike from above; background false positives are parked cars that are probably unlabelled.
+
+![Faster R-CNN failure cases](images/frcnn_failure_cases.png)
+
+Public LB of the 4-fold WBF ensemble: **0.243** (baseline 0.213). Sweep table, per-class AP, stage and proposal tables: [03_faster_rcnn.ipynb](notebooks/03_faster_rcnn.ipynb).
 
 ### One-stage anchor-based: RetinaNet
 
-lr 0.0025. Without a proposal stage, the classifier scores every anchor, almost all of them background, and a small object may match no anchor at all; the focal loss and the anchor-matching statistics address these two issues. Anchors 16–256 come from the EDA box sizes.
+lr 0.0025 ([04_retinanet.ipynb](notebooks/04_retinanet.ipynb), [reports/retinanet](reports/retinanet/)). With the default 32–512 anchors, no anchor matches any object under 16 px and 42% of 16–32 px objects; anchors 16–256 (from the EDA box sizes) cut this to 47% and 1.4%, but double the negatives per positive anchor (286 → 580).
 
-_Results pending._
+On fold 0 smaller anchors raise AP_small from 0.025 to 0.042 but lose 0.07 AP_large, so mAP falls (0.215 → 0.199); lower IoU thresholds make it worse. Removing the focal term (γ = 0) is slightly better than the default (0.221) and gets the full CV. OOF: **mAP 0.188**, AP50 0.357, AP_small 0.041; fold mean 0.200 ± 0.031; 48.5 ms per image. That equals the baseline and is 0.024 below the tuned Faster R-CNN (0.235 vs 0.221 on fold 0).
+
+**Without a proposal stage**, localisation is weaker (AP75 0.176 vs 0.190) and small objects suffer most (AP_small 0.041 vs 0.055), as expected. The focal loss turned out unnecessary: the prior bias of the classifier already handles the imbalance. Fixing anchors alone does not close the gap; learned assignment or an anchor-free head (FCOS) is the cleaner fix. Public LB: **0.188**. Anchor, sweep and per-class tables: [04_retinanet.ipynb](notebooks/04_retinanet.ipynb).
 
 ### Anchor-free: FCOS
 
-lr 0.0025. A location is positive if it lies inside a box and within a radius of its centre, on the FPN level that matches the box size; the radius sets how many locations a small object gets. Search range: radius 0.5, 1.5 (default), 2.5, and box loss ×2.
+lr 0.0025 ([05_fcos.ipynb](notebooks/05_fcos.ipynb)). Without anchors, a feature-map location is positive for an object if it lies inside the box and within `radius × stride` of its centre, on the FPN level that matches the box size; a location inside several boxes takes the smallest. The radius sets how many positives an object gets: at radius 1.5 a 16–32 px object gets a median of 6, at 2.5 it gets 9 and a large object 25. Objects under 16 px are the exception: 4.7% of them get no positive at any radius, since a box smaller than the stride may contain no location at all. In dense scenes a wider radius makes the sampling regions of neighbours overlap.
 
-_Results pending._
+Search range: radius 0.5, 1.5 (default), 2.5, and box loss ×2. No change beats the default (0.205 on fold 0): radius 0.5 gives too few positives (AP75 −0.025), radius 2.5 loses 0.021 AP_medium to ambiguous positives in crowds, and box loss ×2 has no effect. So the initial and tuned FCOS are the same model. OOF: **mAP 0.179**, AP50 0.355, AP_small 0.050; fold mean 0.191 ± 0.029; 49 ms per image. Public LB of the 4-fold WBF ensemble: **0.162**.
+
+Against the tuned anchor-based detectors, by object size (OOF): FCOS beats RetinaNet on small objects (AP_small 0.050 vs 0.041), as the assignment suggests, but loses on medium (0.158 vs 0.164) and large ones (0.341 vs 0.376), and is the weakest overall. Faster R-CNN leads in every size bin (0.055 / 0.193 / 0.401). Assignment and sweep tables: [05_fcos.ipynb](notebooks/05_fcos.ipynb).
 
 ### Query-based: RT-DETR
 
 AdamW, cosine schedule, 300 queries. The compute budget is the baseline's: 1.5 GPU-hours per fold, and Ultralytics fits the epochs into this time. Held-out mAP over training hours is plotted against the YOLO baseline with the same budget.
 
-_Results pending._
+_In progress._
 
 ### Comparison of all models
 
@@ -121,9 +118,9 @@ OOF over all labelled frames for the selected experiment of each family; fold-0 
 | Model | Initial, fold-0 mAP | Selected experiment | OOF mAP | AP50 | AP_small | ms / image | Public LB |
 |---|---:|---|---:|---:|---:|---:|---:|
 | YOLO11s baseline | 0.195 | — | 0.188 | 0.356 | 0.053 | 35.6 | 0.213 |
-| Faster R-CNN | | | | | | | |
-| RetinaNet | | | | | | | |
-| FCOS | | | | | | | |
+| Faster R-CNN | 0.225 | step LR | 0.212 | 0.416 | 0.055 | 66.3 | 0.243 |
+| RetinaNet | 0.215 | focal γ = 0 | 0.187 | 0.357 | 0.041 | 48.5 | 0.188 |
+| FCOS | 0.205 | default (radius 1.5) | 0.179 | 0.355 | 0.050 | 49.2 | 0.162 |
 | RT-DETR-L | | | | | | | |
 
 ### Final pipeline
@@ -138,7 +135,13 @@ _Results pending._
 
 | Submission | Internal mAP | Public LB |
 |---|---:|---:|
+| YOLO11s baseline, single fold model | | 0.173 |
 | YOLO11s baseline, fold ensemble (WBF of 4 fold models) | 0.188 (OOF) | 0.213 |
+| Faster R-CNN step LR, fold ensemble | 0.212 (OOF) | 0.243 |
+| RetinaNet γ = 0, fold ensemble | 0.187 (OOF) | 0.188 |
+| FCOS default, fold ensemble | 0.179 (OOF) | 0.162 |
+| Inference + temporal rescoring (07.1) | | 0.314 |
+| Cross-model ensemble (07.2) | | 0.322 |
 
 ## Final model and reproducibility
 

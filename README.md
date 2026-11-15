@@ -65,6 +65,13 @@ report.md     the report; index.html renders it as a site
 requirements.txt  package versions of the Kaggle runs
 ```
 
+To view the report as a site locally (it loads `report.md`, so it needs a server, not `file://`):
+
+```bash
+python -m http.server 8000
+# open http://localhost:8000
+```
+
 ### `src/core`
 
 **`__init__.py`**: `CLASSES`, `SEED`, `N_FOLDS`, `MAX_DETS` (500 per image) and `PROTOCOL`, the fixed training settings of the detector comparison (03–06).
