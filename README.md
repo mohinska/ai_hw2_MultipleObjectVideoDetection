@@ -49,15 +49,16 @@ All notebooks use the shared code in `src/core`.
 | 4. One-stage anchor-based | RetinaNet: anchors from data, IoU thresholds, focal loss | [04_retinanet](notebooks/04_retinanet.ipynb) |
 | 5. One-stage anchor-free | FCOS: centre-sampling radius, box loss, breakdown by object size | [05_fcos](notebooks/05_fcos.ipynb) |
 | 6. Query-based | RT-DETR: queries, losses, same compute budget | [06_rtdetr](notebooks/06_rtdetr.ipynb) |
-| 7.0 Pipeline: model | YOLO: masked data, P2 head, loss weight | [07_0_yolo](notebooks/07_0_yolo.ipynb) |
-| 7.1 Pipeline: inference | flip, tiles, NMS vs WBF, robustness at 960 px | [07_1_inference](notebooks/07_1_inference.ipynb) |
-| 7.2 Pipeline: ensemble | summary of all models, cross-model WBF, temporal rescoring, final submission | [07_2_ensemble](notebooks/07_2_ensemble.ipynb) |
+| 7.1 Pipeline: tiles | RT-DETR trained on full frames + full-resolution tiles; test-time views chosen on val | [07_1_rtdetr_tiles](notebooks/07_1_rtdetr_tiles.ipynb) |
+| 7.2 Final submission | the same model on train + val, merged with 7.1 by NMS (public LB 0.334) | [07_2_rtdetr_final](notebooks/07_2_rtdetr_final.ipynb) |
 | 8. Visualization (bonus) | W&B logs, Grad-CAM and RoI t-SNE of Faster R-CNN, RT-DETR deformable attention | [08_visualization](notebooks/08_visualization.ipynb) |
 
 ## Repository
 
 ```
 notebooks/    one notebook per step above
+experiments/  earlier pipeline steps that led to step 7 (test-time views, temporal rescoring, cross-model
+              ensemble; *_old ran on commit 046347a, package src/vod) and the detection-level bonus
 src/core/     shared tools: data, folds, evaluation, CV loop, models, inference variants, ensembles, submission
 reports/      saved CV results (config, metrics, training curves) of finished runs
 images/       figures used in the report
