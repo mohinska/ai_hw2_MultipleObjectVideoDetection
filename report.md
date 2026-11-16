@@ -11,10 +11,10 @@ We detect 8 object classes (person, bicycle, car, van, truck, tricycle, bus, mot
 
 The data analysis showed four main difficulties:
 
-- 24% of objects are smaller than 32×32 px, so the input resolution decides how many objects are visible.
-- 42 objects per frame at the median.
-- Car and person are three quarters of the objects, bus is under 1%.
-- Neighbouring frames are near-duplicates, clips come from shared source flights (why it matters - possible data-leakage if split unwisely).
+- Small objects.
+- Dense scenes.
+- Imbalanced data.
+- Neighbouring frames are near-duplicates (why it matters - possible data-leakage if split unwisely).
 
 We compare four detector families under one protocol and OOF validation, next to a YOLO11s baseline, and then build the final pipeline from data, inference and ensemble strategies on top of the best models.
 
@@ -24,22 +24,20 @@ We compare four detector families under one protocol and OOF validation, next to
 
 Code: [01_eda_preprocessing.ipynb](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/01_eda_preprocessing.ipynb).
 
-Test frames are 680–1920 px wide, while labelled frames start at 1344 px.
-
 The annotations are clean: no zero-size or oof boxes, no duplicates, no gaps in frame numbering.
 
 Findings and decisions:
-- at minimum of 640 px, 9.7% of objects are below 8 px (finest feature map) while at 1280 px only 0.6% do → all models are trained and evaluated at 1280 px.
+- at minimum of 640 px, 9.7% of objects are below 8 px (finest feature map) while at 1280 px only 0.6% do $\rightarrow$ all models are trained and evaluated at 1280 px.
 
-- k-means on box sizes at 1280 px gives shapes from 9×16 to 124×99 px with aspect ratios 0.5–1.9 → test anchors of 16–256 px.
+- k-means on box sizes at 1280 px gives shapes from $9 \times 16$ to $124 \times 99$ px with aspect ratios 0.5-1.9 $\rightarrow$ test anchors of 16-256 px.
 
-- dense scenes  → keep up to 500 detections per image and use 300 queries for RT-DETR.
+- dense scenes  $\rightarrow$ keep up to 500 detections per image and use 300 queries for RT-DETR.
 
-- Neighbouring frames are near-duplicates  → train on every 5th frame (five times less compute and frames differ) 
+- Neighbouring frames are near-duplicates  $\rightarrow$ train on every 5th frame (five times less compute and frames differ) 
 
-- A frame has ≈20 ignored regions and others, and 72% of frames have at least one. In training we fill them with the frame's mean colour and drop objects at least 50% inside them (all models except the baseline) ( crowds are neither learned as background nor counted as misses). YOLO txt and COCO json labels agree exactly on 60 checked val frames
+- A frame has ~20 ignored regions and others, and 72% of frames have at least one. In training we fill them with the frame's mean colour and drop objects at least 50% inside them (all models except the baseline) ( crowds are neither learned as background nor counted as misses). YOLO txt and COCO json labels agree exactly on 60 checked val frames
 
-- Eight test clips are only 680–960 px wide, and test frames are darker (mean brightness 100 vs 116)  → check every inference variant on frames shrunk to 960 px as well.
+- Eight test clips are only 680-960 px wide, and test frames are darker (mean brightness 100 vs 116)  $\rightarrow$ check every inference variant on frames shrunk to 960 px as well.
 
 ![Object sizes](images/eda_object_sizes.png)
 
@@ -62,9 +60,11 @@ All final numbers are in this table (out-of-fold over all labelled frames, selec
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | YOLO11s baseline | defaults | 0.188 | 0.356 | 0.173 | 0.053 | 0.175 | 0.334 | 0.291 | 36 | 0.213 |
 | Faster R-CNN | step LR | 0.212 | 0.416 | 0.190 | 0.055 | 0.193 | 0.401 | 0.372 | 66 | 0.243 |
-| RetinaNet | γ = 0 | 0.188 | 0.357 | 0.176 | 0.041 | 0.164 | 0.376 | 0.308 | 48 | 0.188 |
+| RetinaNet | $\gamma = 0$ | 0.188 | 0.357 | 0.176 | 0.041 | 0.164 | 0.376 | 0.308 | 48 | 0.188 |
 | FCOS | default | 0.179 | 0.355 | 0.161 | 0.050 | 0.158 | 0.341 | 0.357 | 49 | 0.162 |
 | RT-DETR-L | no denoising (3 folds) | 0.168 | 0.317 | 0.162 | 0.043 | 0.149 | 0.289 | 0.415 | 196 | 0.307 |
+
+RT-DETR: mean of folds 0, 1, 3 (fold 2 failed); its LB is an earlier single-model run.
 
 ### Baseline
 
@@ -72,9 +72,9 @@ YOLO11s, Ultralytics defaults, 20 epochs, no masking ([02](https://github.com/mo
 
 ### Two-stage: Faster R-CNN
 
-SGD, lr 0.005, warmup + cosine ([03](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/03_faster_rcnn.ipynb)). All experiments are within 0.010 of the default (0.225 on fold 0); step LR is best (0.235). It is the best family overall, +0.024 OOF mAP over the baseline.
+SGD, lr 0.005, warmup + cosine ([03](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/03_faster_rcnn.ipynb)). All experiments are within 0.010 of the default (0.225 on fold 0); step LR is best (0.235).
 
-The RPN sets the recall ceiling: 1,000 proposals cover 39% of objects under 16 px and 74% of 16–32 px ones. The RoI head keeps 92% of covered objects but does not tighten tiny boxes. 
+The RPN sets the recall ceiling: 1,000 proposals cover 39% of objects under 16 px and 74% of 16-32 px ones. The RoI head keeps 92% of covered objects but does not tighten tiny boxes. 
 
 Failure cases: tiny distant objects and tightly parked cars get no proposal; tricycle, motor and bicycle are confused from above; unlabelled parked cars count as false positives.
 
@@ -82,38 +82,38 @@ Failure cases: tiny distant objects and tightly parked cars get no proposal; tri
 
 ### One-stage anchor-based: RetinaNet
 
-[04](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/04_retinanet.ipynb). With 32–512 anchors no anchor matches an object under 16 px; anchors 16–256 leave 47% unmatched but double the negatives per positive (286 → 580). They raise AP_small (0.025 → 0.042) but lose 0.07 AP_large, so mAP falls (0.215 → 0.199); lower IoU thresholds are worse. γ = 0 is best (0.221). It ends equal to the baseline.
+[04](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/04_retinanet.ipynb). With 32-512 anchors no anchor matches an object under 16 px; anchors 16-256 leave 47% unmatched but double the negatives per positive (286 $\rightarrow$ 580). They raise AP_small (0.025 $\rightarrow$ 0.042) but lose 0.07 AP_large, so mAP falls (0.215 $\rightarrow$ 0.199); lower IoU thresholds are worse. $\gamma = 0$ is best (0.221).
 
 Without a proposal stage localisation is weaker (AP75 0.176 vs 0.190) and small objects suffer most (AP_small 0.041 vs 0.055). Focal loss turned out unnecessary: the classifier's prior bias already handles the imbalance. Better positive assignment (ATSS) addresses this more directly than anchor sizes.
 
 ### Anchor-free: FCOS
 
-[05](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/05_fcos.ipynb). A location is positive for an object if it lies inside the box, within radius × stride of its centre, on the FPN level matching the box size; overlaps go to the smallest box. At radius 1.5 a 16–32 px object gets 6 positives, at 2.5 it gets 9; 4.7% of objects under 16 px get none, being smaller than the stride. In crowds a wider radius makes neighbours' regions overlap.
+[05](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/05_fcos.ipynb). A location is positive for an object if it lies inside the box, within $\text{radius} \times \text{stride}$ of its centre, on the FPN level matching the box size; overlaps go to the smallest box. At radius 1.5 a 16-32 px object gets 6 positives, at 2.5 it gets 9; 4.7% of objects under 16 px get none, being smaller than the stride. In crowds a wider radius makes neighbours' regions overlap.
 
-Search: radius 0.5 / 1.5 / 2.5, box loss ×2. Nothing beats the default (0.205): radius 0.5 gives too few positives, 2.5 loses AP_medium in crowds. FCOS beats RetinaNet on small objects (0.050 vs 0.041) but loses on medium and large ones; Faster R-CNN leads in every size bin.
+Search: radius 0.5 / 1.5 / 2.5, box loss $\times 2$. Nothing beats the default (0.205): radius 0.5 gives too few positives, 2.5 loses AP_medium in crowds.  By size, FCOS is better than RetinaNet only on small objects. Faster R-CNN leads in every bin.
 
 ### Query-based: RT-DETR
 
 RT-DETR-L, AdamW, cosine, 300 queries, the baseline's budget of 1.5 GPU-h per fold ([06](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/06_rtdetr.ipynb)). Hungarian matching assigns each object to exactly one query and trains the rest as "no object", so duplicates are not produced and NMS is not needed. Early in training the matching is unstable, which slows convergence; denoising queries stabilise it.
 
-With the default lr of 10⁻⁴ the model has not converged in 1.5 h (0.096 on fold 0); lr 3·10⁻⁴ nearly doubles it (0.173), and without denoising mAP is the same (0.175) with higher AP_small, so this version is selected. YOLO11s is still higher under this budget (0.195), but RT-DETR has the highest recall (AR500 0.43 vs 0.31) and is much stronger on frames with more than 100 objects (0.27 vs 0.17). The fold-2 CV run failed (0.0005), so the table shows the mean of the other folds. An earlier single RT-DETR-L run scored 0.307 on the public LB, the best single model before the pipeline.
+With the default lr of $10^{-4}$ the model has not converged in 1.5 h (0.096 on fold 0); lr $3 \cdot 10^{-4}$ nearly doubles it (0.173), and without denoising mAP is the same (0.175) with higher AP_small, so this version is selected. YOLO11s is still higher under this budget (0.195), but RT-DETR has the highest recall (AR500 0.43 vs 0.31) and is much stronger on frames with more than 100 objects (0.27 vs 0.17). The fold-2 CV run failed (0.0005), so the table shows the mean of the other folds. An earlier single RT-DETR-L run scored 0.307 on the public LB, the best single model before the pipeline.
 
 ![RT-DETR held-out mAP over training time, fold 0](images/rtdetr_budget_curves.png)
 
-On the same held-out frames and budget, YOLO11s is at 0.22 mAP after its first epoch (5 min) and stays at 0.20–0.23 until 1.5 h, while RT-DETR with lr 3·10⁻⁴ is still rising at the end (0.17): the CNN converges almost at once, the query-based model has not converged.
+On the same held-out frames and budget, YOLO11s is at 0.22 mAP after its first epoch (5 min) and stays at 0.20-0.23 until 1.5 h, while RT-DETR with lr $3 \cdot 10^{-4}$ is still rising at the end (0.17).
 
 ### Final pipeline
 
-The pipeline is built on RT-DETR, the best model on the LB. Every step is chosen on the official val (≈570 frames, unseen by these models) and kept only if it beats the previous one at native resolution, at 960 px and in most clips.
+The pipeline is built on RT-DETR. Every step is chosen on the official val ($\approx 570$ frames, unseen by these models) and kept only if it beats the previous one at native resolution, at 960 px and in most clips.
 
-1. Test-time views ([07_pipeline_variants_old](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/experiments/07_pipeline_variants_old.ipynb)): flip and 2×2 tiles merged by NMS raise RT-DETR from 0.264 to 0.287 (7 of 7 clips; AP_small 0.118 → 0.177; at 960 px 0.255 → 0.265).
+1. Test-time views ([07_pipeline_variants_old](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/experiments/07_pipeline_variants_old.ipynb)): flip and $2 \times 2$ tiles merged by NMS raise RT-DETR from 0.264 to 0.287 (7 of 7 clips; AP_small 0.118 $\rightarrow$ 0.177; at 960 px 0.255 $\rightarrow$ 0.265).
 2. Merging and temporal rescoring ([07_1_temporal_old](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/experiments/07_1_temporal_old.ipynb)): WBF over the same views drops to 0.258, since an object seen in one tile gets its score averaged with views that missed it. Temporal rescoring ([rescore](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/src/core/temporal.py)) lowers boxes not confirmed in neighbouring frames: +0.003 at best, but better in only 3 of 7 clips, so it is not used. LB 0.314.
 3. Ensemble ([07_2_ensemble_old](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/experiments/07_2_ensemble_old.ipynb)): Faster R-CNN with the same views (0.228) fused with RT-DETR by WBF, weights 3:1, IoU 0.7; here WBF fits because both models see the same views. Val 0.292 (0.275 at 960 px, 7 of 7 clips), LB 0.322.
-4. RT-DETR trained on tiles ([07_1_rtdetr_tiles](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_1_rtdetr_tiles.ipynb)), following SAHI: every training frame is used whole and as 2×2 tiles cut at full resolution (15,250 images, 5.5 GPU-h). Its views are chosen by the same rule:
+4. RT-DETR trained on tiles ([07_1_rtdetr_tiles](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_1_rtdetr_tiles.ipynb)), following SAHI: every training frame is used whole and as $2 \times 2$ tiles cut at full resolution (15,250 images, 5.5 GPU-h). Its views are chosen by the same rule:
 
 | Variant (val) | Views | mAP | AP_small | mAP @960 | clips better | ms |
 |---|---|---:|---:|---:|---:|---:|
-| full | full 1280 | 0.255 | 0.105 | 0.246 | — | 121 |
+| full | full 1280 | 0.255 | 0.105 | 0.246 | - | 121 |
 | flip_wbf | + flip | 0.256 | 0.103 | 0.251 | 7/7 | 260 |
 | scale_wbf | + 1600 px | 0.260 | 0.106 | 0.254 | 5/7 | 293 |
 | tiles_nms | + tiles, NMS | 0.272 | 0.140 | 0.263 | 7/7 | 484 |
@@ -121,52 +121,54 @@ The pipeline is built on RT-DETR, the best model on the LB. Every step is chosen
 | all_nms | all, NMS | 0.274 | 0.143 | 0.265 | 7/7 | 795 |
 | all_wbf | all, WBF | 0.264 | 0.137 | 0.262 | 6/7 | 795 |
 
-Tile views again add about +0.02 and NMS again beats WBF. The model trained on tiles is lower on val than the one trained on full frames (0.274 vs 0.287), but it is the best on the public LB (0.329 vs 0.322). Val has 7 clips from a few flights, while test has 48 darker and smaller clips, so val cannot separate differences of 0.01. Training on tiles shows small objects at native size, which should help most on low-resolution test clips, and the LB agrees; we follow the LB here, knowing val does not confirm it.
+ The model trained on tiles is lower on val than the one trained on full frames (0.274 vs 0.287), but it is the best on the public LB (0.329 vs 0.322). Val has 7 clips from a few flights, while test has 48 darker and smaller clips, so val cannot separate differences of 0.01. Training on tiles shows small objects at native size, which should help most on low-resolution test clips, and the LB agrees; we follow the LB here, knowing val does not confirm it.
 
-5. Second model on all flights ([07_2_rtdetr_final](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_2_rtdetr_final.ipynb)): the same recipe trained on train + val (63 clips, 17,045 images, 10 epochs in 4.5 h on 2×T4) with another seed and the views of step 4. Since all labelled clips are used, there is no internal score and the LB is the only check. Alone it scores 0.269, well below step 4, but its boxes merged with those of step 4 by class-wise NMS (IoU 0.65) give 0.334, our best submission. The two models make different mistakes, so the merge adds boxes that one of them missed.
+5. Second model on all flights ([07_2_rtdetr_final](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_2_rtdetr_final.ipynb)): the same recipe trained on train + val (63 clips, 17,045 images, 10 epochs in 4.5 h on $2 \times$ T4) with another seed and the views of step 4. Since all labelled clips are used, there is no internal score and the LB is the only check. Alone it scores 0.269, well below step 4, but its boxes merged with those of step 4 by class-wise NMS (IoU 0.65) give 0.334, our best submission. The two models make different mistakes, so the merge adds boxes that one of them missed.
 
-Unsuccessful attempts: RetinaNet with smaller anchors or lower IoU thresholds; all FCOS changes; RT-DETR at lr 10⁻⁴; WBF over test-time views; temporal rescoring (on the tile-trained model it even lowers mAP from 0.274 to 0.265 or less); YOLO11m with the same views (0.253); fusion IoU 0.8 (0.288); the train + val model alone (LB 0.269).
+Unsuccessful attempts: RetinaNet with smaller anchors or lower IoU thresholds; all FCOS changes; RT-DETR at lr $10^{-4}$; WBF over test-time views; temporal rescoring (on the tile-trained model it even lowers mAP from 0.274 to 0.265 or less); YOLO11m with the same views. fusion IoU 0.8; the train + val model alone
 
 ### Bonus: visualization
 
-[08_visualization](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/08_visualization.ipynb); training curves, configs and held-out predictions of every run are in [W&B](https://wandb.ai/hamaniuk-pn-ucu/visdrone-vid-hw2). Grad-CAM on Faster R-CNN: almost every box is pooled from P2, and small objects are explained only by the stride-4 maps (C4–C5 are close to uniform). t-SNE of RoI features: wrong-class detections gather where the bicycle–motor–tricycle and car–van clusters touch, and detections in ignored regions look like real people and cars. ![t-SNE of Faster R-CNN RoI features](images/viz_tsne.jpg)
+[08_visualization](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/08_visualization.ipynb); training curves, configs and held-out predictions of every run are in [W&B](https://wandb.ai/hamaniuk-pn-ucu/visdrone-vid-hw2). Grad-CAM on Faster R-CNN: almost every box is pooled from P2, and small objects are explained only by the stride-4 maps (C4-C5 are close to uniform). t-SNE of RoI features: wrong-class detections gather where the bicycle-motor-tricycle and car-van clusters touch, and detections in ignored regions look like real people and cars.
+
+![t-SNE of Faster R-CNN RoI features](images/viz_tsne.jpg)
 
 RT-DETR attention: the decoder samples around the box in the first layers, on the object in the middle ones and on context in the last ones, more for small objects and in dense scenes.
 
 ## Final model and reproducibility
 
-Final model: two RT-DETR-L models trained on full frames and full-resolution tiles, one on train (step 4) and one on train + val (step 5). Each predicts the full frame at 1280 px, its flip, 1600 px and 2×2 tiles; all boxes are merged by class-wise NMS (IoU 0.65), ≤500 per image. Public LB 0.334. The first model alone scores 0.274 on val and 0.329 on the LB; the second has no internal score.
+Final model: two RT-DETR-L models trained on full frames and full-resolution tiles, one on train (step 4) and one on train + val (step 5). Each predicts the full frame at 1280 px, its flip, 1600 px and $2 \times 2$ tiles; all boxes are merged by class-wise NMS (IoU 0.65), $\le 500$ per image. Public LB 0.334. The first model alone scores 0.274 on val and 0.329 on the LB; the second has no internal score.
 
-Run: every notebook runs on Kaggle (T4, Internet on, competition data attached), clones this repository and installs Ultralytics and faster-coco-eval ([requirements.txt](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/requirements.txt)), seed 42. Order: 01 → 02 → 03–06 → 07_1 → 07_2, with earlier outputs attached as inputs. The earlier pipeline steps in [experiments/](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/tree/main/experiments) (`*_old`) ran on commit 046347a (package `src/vod`). The final submission: run [07_1_rtdetr_tiles](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_1_rtdetr_tiles.ipynb) (T4 ×2, ≈7 h), then [07_2_rtdetr_final](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_2_rtdetr_final.ipynb) with its output attached (T4 ×2, ≈6.5 h), which writes `submission_r1_r2.csv`. Each run saves `cv_<name>.json` with config, seed and versions.
+Run: every notebook runs on Kaggle (T4, Internet on, competition data attached), clones this repository and installs Ultralytics and faster-coco-eval ([requirements.txt](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/requirements.txt)), seed 42. Order: 01 $\rightarrow$ 02 $\rightarrow$ 03-06 $\rightarrow$ 07_1 $\rightarrow$ 07_2, with earlier outputs attached as inputs. The earlier pipeline steps in [experiments/](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/tree/main/experiments) (`*_old`) ran on commit 046347a (package `src/vod`). The final submission: run [07_1_rtdetr_tiles](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_1_rtdetr_tiles.ipynb) (T4 $\times 2$, $\approx 7$ h), then [07_2_rtdetr_final](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_2_rtdetr_final.ipynb) with its output attached (T4 $\times 2$, $\approx 6.5$ h), which writes `submission_r1_r2.csv`. Each run saves `cv_<name>.json` with config, seed and versions.
 
 ## Conclusion
 
-Under one protocol Faster R-CNN is the strongest family (OOF 0.212), RetinaNet matches the baseline and FCOS is the weakest. RT-DETR does not converge in 1.5 h, yet it is the best single model on the LB and the strongest in dense scenes. Small objects limit every model, and tiles helped more than any architecture or loss change. NMS suits views that see different objects, WBF views of the same objects. Fold scores differ by up to 0.09 between flights, so small differences are not reliable.
+Under one protocol Faster R-CNN is the strongest family, RetinaNet matches the baseline and FCOS is the weakest. RT-DETR does not converge in 1.5 h, yet it is the best single model on the LB and the strongest in dense scenes. Small objects limit every model, and tiles helped more than any architecture or loss change. NMS suits views that see different objects, WBF views of the same objects. Fold scores differ by up to 0.09 between flights, so small differences are not reliable.
 
 AI usage: AI (Claude) helped write and debug code, fix grammar; experiment choices, interpretation and text are ours.
 
 ## References
 
-[VisDrone](https://arxiv.org/abs/2001.06303) ·
-[Faster R-CNN](https://arxiv.org/abs/1506.01497) ·
-[FPN](https://arxiv.org/abs/1612.03144) ·
-[RetinaNet](https://arxiv.org/abs/1708.02002) ·
-[YOLOv2](https://arxiv.org/abs/1612.08242) ·
-[FCOS](https://arxiv.org/abs/1904.01355) ·
-[ATSS](https://arxiv.org/abs/1912.02424) ·
-[DETR](https://arxiv.org/abs/2005.12872) ·
-[DN-DETR](https://arxiv.org/abs/2203.01305) ·
-[RT-DETR](https://arxiv.org/abs/2304.08069) ·
-[Ultralytics](https://docs.ultralytics.com) ·
-[GroupKFold](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.GroupKFold.html) ·
-[COCO metrics](https://cocodataset.org/#detection-eval) ·
-[faster-coco-eval](https://github.com/MiXaiLL76/faster_coco_eval) ·
-[TIDE](https://arxiv.org/abs/2008.08115) ·
-[SAHI](https://arxiv.org/abs/2202.06934) ·
-[WBF](https://arxiv.org/abs/1910.13302) ·
-[Soft-NMS](https://arxiv.org/abs/1704.04503) ·
-[Seq-NMS](https://arxiv.org/abs/1602.08465) ·
-[T-CNN](https://arxiv.org/abs/1604.02532) ·
-[Grad-CAM](https://arxiv.org/abs/1610.02391) ·
-[Deformable DETR](https://arxiv.org/abs/2010.04159) ·
+[VisDrone](https://arxiv.org/abs/2001.06303),
+[Faster R-CNN](https://arxiv.org/abs/1506.01497),
+[FPN](https://arxiv.org/abs/1612.03144),
+[RetinaNet](https://arxiv.org/abs/1708.02002),
+[YOLOv2](https://arxiv.org/abs/1612.08242),
+[FCOS](https://arxiv.org/abs/1904.01355),
+[ATSS](https://arxiv.org/abs/1912.02424),
+[DETR](https://arxiv.org/abs/2005.12872),
+[DN-DETR](https://arxiv.org/abs/2203.01305),
+[RT-DETR](https://arxiv.org/abs/2304.08069),
+[Ultralytics](https://docs.ultralytics.com),
+[GroupKFold](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.GroupKFold.html),
+[COCO metrics](https://cocodataset.org/#detection-eval),
+[faster-coco-eval](https://github.com/MiXaiLL76/faster_coco_eval),
+[TIDE](https://arxiv.org/abs/2008.08115),
+[SAHI](https://arxiv.org/abs/2202.06934),
+[WBF](https://arxiv.org/abs/1910.13302),
+[Soft-NMS](https://arxiv.org/abs/1704.04503),
+[Seq-NMS](https://arxiv.org/abs/1602.08465),
+[T-CNN](https://arxiv.org/abs/1604.02532),
+[Grad-CAM](https://arxiv.org/abs/1610.02391),
+[Deformable DETR](https://arxiv.org/abs/2010.04159),
 [t-SNE](https://www.jmlr.org/papers/v9/vandermaaten08a.html)
