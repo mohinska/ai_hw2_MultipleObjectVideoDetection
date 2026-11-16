@@ -58,7 +58,7 @@ All notebooks use the shared code in `src/core`.
 ```
 notebooks/    one notebook per step above
 experiments/  earlier pipeline steps that led to step 7 (test-time views, temporal rescoring, cross-model
-              ensemble; *_old ran on commit 046347a, package src/vod) and the detection-level bonus
+              ensemble; they ran on commit 046347a, package src/vod)
 src/core/     shared tools: data, folds, evaluation, CV loop, models, inference variants, ensembles, submission
 reports/      saved CV results (config, metrics, training curves) of finished runs
 images/       figures used in the report
