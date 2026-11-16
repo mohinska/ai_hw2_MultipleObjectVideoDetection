@@ -85,7 +85,7 @@ Search: radius 0.5 / 1.5 / 2.5, box loss $\times 2$. Nothing beats the default: 
 
 RT-DETR-L, AdamW, cosine, 300 queries, the baseline's budget of 1.5 GPU-h per fold ([06](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/06_rtdetr.ipynb)). Hungarian matching assigns each object to exactly one query and trains the rest as "no object", so duplicates are not produced and NMS is not needed. Early in training the matching is unstable, which slows convergence; denoising queries stabilise it.
 
-With the default lr of $10^{-4}$ the model has not converged in 1.5 h; lr $3 \cdot 10^{-4}$ nearly doubles mAP, and without denoising mAP is the same with higher AP_small, so this version is selected. YOLO11s is still higher under this budget, but RT-DETR has the highest recall and is much stronger on frames with more than 100 objects (0.27 vs 0.17 mAP on fold 0). The fold-2 CV run failed, so the table shows the mean of the other folds. An earlier single RT-DETR-L run scored 0.307 on the public LB, the best single model before the pipeline.
+With the default lr of $10^{-4}$ the model has not converged in 1.5 h; lr $3 \cdot 10^{-4}$ nearly doubles mAP, and without denoising mAP is the same with higher AP_small, so this version is selected. YOLO11s is still higher under this budget, but RT-DETR has the highest recall and is much stronger on frames with more than 100 objects (0.27 vs 0.17 mAP on fold 0). An earlier single RT-DETR-L run scored 0.307 on the public LB, the best single model before the pipeline.
 
 ![RT-DETR held-out mAP over training time, fold 0](images/rtdetr_budget_curves.png)
 
@@ -128,7 +128,7 @@ RT-DETR attention: the decoder samples around the box in the first layers, on th
 
 Final model: the models of steps 4 and 5 merged by class-wise NMS (IoU 0.65), $\le 500$ boxes per image; public LB 0.334 (step 4 alone: val 0.274, LB 0.329).
 
-Run: notebooks run on Kaggle (GPU T4 $\times 2$, Internet on, competition data attached), clone this repository and install the packages from [requirements.txt](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/requirements.txt); seed 42. The final submission: [07_1_rtdetr_tiles](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_1_rtdetr_tiles.ipynb) ($\approx 7$ h), then [07_2_rtdetr_final](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_2_rtdetr_final.ipynb) with its output attached ($\approx 6.5$ h), which writes `submission_r1_r2.csv`.
+Run: notebooks run on Kaggle (GPU T4 $\times 2$, Internet on, competition data attached), clone this repository and install the packages from [requirements.txt](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/requirements.txt); seed 42. The final submission: [07_1_rtdetr_tiles](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_1_rtdetr_tiles.ipynb) ($\approx 7$ h), then [07_2_rtdetr_final](https://github.com/mohinska/ai_hw2_MultipleObjectVideoDetection/blob/main/notebooks/07_2_rtdetr_final.ipynb) with its output attached ($\approx 6.5$ h).
 
 
 ## Conclusion
